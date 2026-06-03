@@ -176,6 +176,32 @@ def shade(
         x, mean - std, mean + std, color=color, alpha=alpha, linewidth=0
     )
 
+def get_phase_change_steps(
+    conn: sqlite3.Connection,
+    run_ids: dict[int, int],
+) -> np.ndarray:
+    """
+    Returns sorted unique steps where env/phase changes across runs.
+    """
+    change_steps = set()
+
+    for run_id in run_ids.values():
+        steps, values = load_metric(conn, run_id, "env/phase")
+        if len(steps) == 0:
+            continue
+
+        # detect changes
+        prev = values[0]
+        for s, v in zip(steps[1:], values[1:]):
+            if v != prev:
+                change_steps.add(s)
+                prev = v
+
+    if not change_steps:
+        return np.array([])
+
+    return np.array(sorted(change_steps))
+
 def fmt_steps(x: float, _) -> str:
     if x >= 1e6:
         return f"{x / 1e6:.1f}M"
@@ -280,6 +306,8 @@ def plot_policy_probs(
     if n_agents == 1:
         axes = [axes]
 
+    phase_steps = get_phase_change_steps(conn, run_ids)
+
     for ag, ax in enumerate(axes):
         for ac in range(n_actions):
             shade(
@@ -290,6 +318,17 @@ def plot_policy_probs(
                 color=PALETTE[ac % len(PALETTE)],
                 label=action_labels[ac] if ac < len(action_labels) else f"A{ac}",
             )
+
+        for i, s in enumerate(phase_steps):
+            ax.axvline(
+                s,
+                linestyle="--",
+                color="black",
+                alpha=0.5,
+                linewidth=1,
+                label="Phase change" if (ag == 0 and i == 0) else None,
+            )
+
         ax.set_ylim(-0.05, 1.05)
         ax.set_xlabel("Environment Steps")
         ax.set_ylabel("Action Probability" if ag == 0 else "")
@@ -305,6 +344,54 @@ def plot_policy_probs(
     fig.tight_layout()
     savefig(fig, out_dir, "policy_probs.pdf")
 
+def plot_scalar_metric(
+    conn: sqlite3.Connection,
+    run_ids: dict[int, int],
+    metric_key: str,
+    scenario: str,
+    out_dir: str,
+    filename: str,
+    ylabel: str,
+    title: str,
+    hline: float | None = None,
+    hline_label: str = "",
+    n_points: int = 200,
+):
+    grid = build_common_grid(conn, run_ids, metric_key, n_points)
+    if len(grid) == 0:
+        print(f"  ⚠  No data for '{metric_key}' — skipping.")
+        return
+
+    interp = np.stack([
+        interpolate_to_grid(*load_metric(conn, rid, metric_key), grid)
+        for rid in run_ids.values()
+    ])
+    mean, std = interp.mean(0), interp.std(0)
+
+    fig, ax = plt.subplots(figsize=(6, 4))
+    shade(ax, grid, mean, std, PALETTE[0], label=f"MAPPO (n={len(run_ids)} seeds)")
+
+    if hline is not None:
+        ax.axhline(hline, ls="--", color="gray", lw=1, alpha=0.6, label=hline_label)
+
+    phase_steps = get_phase_change_steps(conn, run_ids)
+    for i, s in enumerate(phase_steps):
+        ax.axvline(
+            s,
+            linestyle="--",
+            color="black",
+            alpha=0.5,
+            linewidth=1,
+            label="Phase change" if i == 0 else None,  
+        )
+
+    ax.set_xlabel("Environment Steps")
+    ax.set_ylabel(ylabel)
+    ax.set_title(title)
+    ax.xaxis.set_major_formatter(mticker.FuncFormatter(fmt_steps))
+    ax.legend()
+    fig.tight_layout()
+    savefig(fig, out_dir, filename)
 
 #───── cli ───────────────────────────────────────────────────────
 

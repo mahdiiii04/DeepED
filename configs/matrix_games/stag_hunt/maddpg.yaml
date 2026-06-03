@@ -2,6 +2,7 @@ seed: 0
 experiment_name: StagHunt
 env_type: matrix_games
 algo_name: maddpg
+poilcy_type: qnet
 sub_exp: ${env.scenario_name}/${algo_name}
 
 env:
