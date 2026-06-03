@@ -399,3 +399,58 @@ class BiasedRPSEnv(MatrixGameEnv):
         td.set("phase_changed", phase_changed)
 
         return td
+    
+#################### Registry ###################
+
+_REGISTRY: dict[str, type[MatrixGameEnv]] = {
+    "stag_hunt": StagHuntEnv,
+    "battle_of_sexes": BattleOfSexesEnv,
+    "biased_rps": BiasedRPSEnv,
+}
+
+
+##################### Factory ####################
+
+def MatrixGameFactory(
+        scenario: str,
+        num_envs: int = 1,
+        max_steps: int = 1,
+        device: str = "cpu",
+        seed: int = 0,
+        **kwargs,
+) -> MatrixGameEnv:
+    """
+    Matrix Games API Interface.
+
+    Parameters
+    ---------
+    scenario : str
+        One if implemented games (e.g., ``prisonners_dilemma``).
+    num_envs : int
+        Number of parallel environments (= batch size).
+    max_steps : int
+        Episode length (number of repeated interactions).
+    device : str
+        Torch device.
+    seed : int
+        RNG seed.
+    **kwargs :
+        Game-specific keyword arguments forwarded to constructors.
+    """
+
+    if scenario not in _REGISTRY:
+        raise ValueError(
+            f"Unknown scenario '{scenario}'."
+            f"Available: {sorted(_REGISTRY.keys())}."
+        )
+    
+    cls = _REGISTRY[scenario]
+
+    return cls(
+        num_envs=num_envs,
+        max_steps=max_steps,
+        device=device,
+        seed=seed,
+        **kwargs,
+    )
+

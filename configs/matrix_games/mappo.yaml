@@ -1,0 +1,39 @@
+seed: 0
+experiment_name: matrix_games
+env_type: matrix_games
+algo_name: mappo
+sub_exp: ${env.scenario_name}/${algo_name}
+
+env:
+  scenario_name: biased_rps
+  num_envs: null          # auto-computed
+  max_steps: 100
+  device: null            # auto-set
+
+model:
+  shared_params: false
+  centralised_critic: false
+
+collector:
+  frames_per_batch: 6000
+  n_iters: 300
+  total_frames: null      # auto-computed
+
+buffer:
+  memory_size: null       # auto-computed
+
+train:
+  num_epochs: 4
+  minibatch_size: 400
+  lr: 3e-4
+  max_grad_norm: 1.0
+  device: null            # auto-set
+
+loss:
+  clip_epsilon: 0.2
+  entropy_eps: 0.01
+  gamma: 0.99
+  lmbda: 0.9
+
+eval:
+  frequency: 10

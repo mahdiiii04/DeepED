@@ -14,7 +14,8 @@ from torch.utils.tensorboard import SummaryWriter
 
 from envs import make_env as _make_env_dispatch
 from algos import build_algorithm
-from shared import ResultsDB
+from shared import ResultsDB, extract_avg_policy, evaluate_policy
+from envs.matrix_games import compute_nash_conv
 
 def _resolve_cfg(cfg: DictConfig):
     cfg.train.device = "cpu" if not torch.cuda.is_available() else "cuda:0"
@@ -79,8 +80,6 @@ def train(cfg: DictConfig):
     total_frames = 0
     
     for i, tensordict_data in enumerate(collector):
-        t_collect_end = time.time()
-
         algo.after_collect(tensordict_data)
         algo.pre_update(tensordict_data)
 
@@ -103,6 +102,12 @@ def train(cfg: DictConfig):
 
         mean_episode_reward = episode_r[:, -1].mean().item()
 
+        avg_policy = extract_avg_policy(
+            env,
+            algo.policy,
+            cfg.get("policy_type", "actor"),
+        )
+        
         scalar_metrics = {
             "reward/mean_episode_reward": mean_episode_reward,
             "time/update": t_update_end - t_update_start,
@@ -110,7 +115,31 @@ def train(cfg: DictConfig):
             **env.get_extra_metrics(),
         }
 
-        db.log_metric(run_id, global_step, scalar_metrics)
+        if cfg.env_type == "matrix_games":
+            nash = compute_nash_conv(
+                env,
+                avg_policy,
+            )
+
+            scalar_metrics["nash/nash_conv"] = nash
+
+        #──── logging ────────────────────────────────────────────
+        db.log_metrics(run_id, global_step, scalar_metrics)
+        db.log_policy(run_id, global_step, avg_policy)
+
+        for k, v in scalar_metrics.items():
+            writer.add_scalar(k, v, global_step=global_step)
+
+        #──── evaluation ─────────────────────────────────────────
+        if (i % cfg.eval.frequency == 0 or i == cfg.collector.n_iters - 1):
+            eval_reward = evaluate_policy(env_test=env_test, policy=algo.policy)
+            db.log_metrics(
+                run_id, global_step, {"eval/mean_episode_reward": eval_reward}
+            )
+            writer.add_scalar("eval/mean_episode_reward", eval_reward, global_step=global_step)
+            torchrl_logger.info(f"Eval reward: {eval_reward:.3f}")
+
+        torchrl_logger.info(f"Iteration {i} | Frames {total_frames:>8d}")
         
     #──── teardown ────────────────────────────────────────────────
     writer.close()
@@ -121,3 +150,6 @@ def train(cfg: DictConfig):
             env.close()
 
     torchrl_logger.info(f"Done. Results in {db_path} (run_id={run_id})")
+
+if __name__ == "__main__":
+    train()
