@@ -130,7 +130,7 @@ class MatrixGameEnv(EnvBase):
         if tensordict is not None and "_reset" in tensordict.keys():
             reset_mask = tensordict.get("_reset").reshape(ne)
         else:
-            reset_mask = tensordict.ones(ne, dtype=torch.bool, device=dev)
+            reset_mask = torch.ones(ne, dtype=torch.bool, device=dev)
 
         self._step_count[reset_mask] = 0
         obs = torch.zeros(ne, self.n_agents, self._obs_dim, device=dev)
@@ -204,6 +204,9 @@ class MatrixGameEnv(EnvBase):
             dim=1
         ).unsqueeze(-1)
         return rewards
+    
+    def get_extra_metrics(self) -> dict:
+        return {}
     
     def _build_payoff(self, **kwargs) -> torch.Tensor: ##### To implement
         """
@@ -400,6 +403,11 @@ class BiasedRPSEnv(MatrixGameEnv):
 
         return td
     
+    def get_extra_metrics(self) -> dict:
+        return {
+            "env/phase": self._current_phase[0].item(),
+        }
+    
 #################### Registry ###################
 
 _REGISTRY: dict[str, type[MatrixGameEnv]] = {
@@ -407,7 +415,6 @@ _REGISTRY: dict[str, type[MatrixGameEnv]] = {
     "battle_of_sexes": BattleOfSexesEnv,
     "biased_rps": BiasedRPSEnv,
 }
-
 
 ##################### Factory ####################
 

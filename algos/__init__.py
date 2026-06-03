@@ -8,5 +8,8 @@ def build_algorithm(
     if algo_name == "mappo":
         from algos.mappo.algorithm import MAPPO
         return MAPPO(env, cfg)
+    elif algo_name == "deep_ed":
+        from algos.deeped.algorithm import DeepED
+        return DeepED(env, cfg)
     else:
-        pass
+        raise ValueError(f"Unknown algorithm: {algo_name}")

@@ -105,7 +105,7 @@ def train(cfg: DictConfig):
         avg_policy = extract_avg_policy(
             env,
             algo.policy,
-            cfg.get("policy_type", "actor"),
+            policy_type=cfg.get("policy_type", "actor"),
         )
         
         scalar_metrics = {

@@ -1,6 +1,6 @@
 hydra:
   run:
-    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    dir: .
   sweep:
     dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
     subdir: ${hydra.job.num}
@@ -104,21 +104,22 @@ hydra:
       - file
     disable_existing_loggers: false
   env: {}
-  mode: RUN
+  mode: MULTIRUN
   searchpath: []
   callbacks: {}
-  output_subdir: .hydra
+  output_subdir: null
   overrides:
     hydra:
-    - hydra.mode=RUN
-    task: []
+    - hydra.mode=MULTIRUN
+    task:
+    - seed=0,1,2,3,4
   job:
     name: train
     chdir: null
-    override_dirname: ''
+    override_dirname: seed=0,1,2,3,4
     id: ???
     num: ???
-    config_name: null
+    config_name: deeped
     env_set: {}
     env_copy: []
     config:
@@ -134,10 +135,13 @@ hydra:
     - path: hydra.conf
       schema: pkg
       provider: hydra
+    - path: C:\Users\mahdi\Documents\DeepED\configs\matrix_games
+      schema: file
+      provider: main
     - path: ''
       schema: structured
       provider: schema
-    output_dir: C:\Users\mahdi\Documents\DeepED\outputs\2026-06-03\10-06-51
+    output_dir: ???
     choices:
       hydra/env: default
       hydra/callbacks: null
@@ -149,3 +153,36 @@ hydra:
       hydra/launcher: basic
       hydra/output: default
   verbose: false
+seed: 0
+experiment_name: matrix_games
+env_type: matrix_games
+algo_name: deep_ed
+sub_exp: ${env.scenario_name}/${algo_name}
+env:
+  scenario_name: biased_rps
+  num_envs: null
+  max_steps: 100
+  device: null
+model:
+  shared_params: false
+  centralized_critic: false
+collector:
+  frames_per_batch: 51200
+  n_iters: 100
+  total_frames: null
+buffer:
+  memory_size: null
+train:
+  num_epochs: 10
+  minibatch_size: 4096
+  actor_lr: 0.0001
+  critic_lr: 0.001
+  max_grad_norm: 40.0
+  device: null
+  tau: 0.005
+loss:
+  entropy_eps: 0.01
+  alpha: 0.01
+  gamma: 0.9
+eval:
+  frequency: 10
