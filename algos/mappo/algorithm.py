@@ -33,8 +33,8 @@ class MAPPO:
                 centralized=False,
                 share_params=cfg.model.shared_params,
                 device=device,
-                depth=2,
-                num_cells=64,
+                depth=cfg.model.depth,
+                num_cells=cfg.model.num_cells,
                 activation_class=nn.Tanh,
             )
         )
@@ -62,8 +62,8 @@ class MAPPO:
             centralized=cfg.model.centralized_critic,
             share_params=cfg.model.shared_params,
             device=device,
-            depth=2,
-            num_cells=64,
+            depth=cfg.model.depth,
+            num_cells=cfg.model.num_cells,
             activation_class=nn.Tanh,
         )
 

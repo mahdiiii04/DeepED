@@ -1,0 +1,46 @@
+seed: 0
+experiment_name: BattleOfSexes
+env_type: matrix_games
+algo_name: ippo
+sub_exp: ${env.scenario_name}/${algo_name}
+
+env:
+  scenario_name: battle_of_sexes
+  num_envs: null          
+  max_steps: 100
+  device: null            
+
+model:
+  shared_params: False
+  centralized_critic: False
+  depth: 2
+  num_cells: 64
+
+collector:
+  frames_per_batch: 51200
+  n_iters: 10
+  total_frames: null      
+
+buffer:
+  memory_size: null      
+
+train:
+  num_epochs: 10
+  minibatch_size: 4096
+  lr: 1e-4
+  max_grad_norm: 40.0
+  device: null            
+
+loss:
+  clip_epsilon: 0.2
+  entropy_eps: 0.01
+  gamma: 0.99
+  lmbda: 0.9
+
+eval:
+  frequency: 10
+
+hydra:
+  run:
+    dir: .  
+  output_subdir: null

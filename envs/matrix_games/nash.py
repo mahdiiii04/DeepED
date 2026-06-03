@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from envs.matrix_games.envs import MatrixGameFactory
 
+@torch.no_grad()
 def compute_nash_conv(
     env,
     avg_pi: torch.Tensor,

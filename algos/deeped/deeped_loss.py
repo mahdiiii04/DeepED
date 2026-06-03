@@ -249,11 +249,6 @@ class DeepEDLoss(LossModule):
             #scaled_reward = reward / self.reward_scale
             target_q = scaled_reward + self.gamma * (1.0 - done) * v_next
 
-            """if torch.rand(1) < 0.01:
-                print("Reward :", reward)
-                print("V_next :", v_next)
-                print("target_q :", target_q)"""
-
         action = tensordict.get(self.tensor_keys.action)
         if action.ndim > 1:
             action = action.squeeze(-1)
@@ -289,10 +284,6 @@ class DeepEDLoss(LossModule):
         q_j = q.unsqueeze(-2)   # (batch, n_agents, 1, n_actions)
         R   = torch.clamp(q_i - q_j, min=0.0)
 
-        """if torch.rand(1) < 0.01:
-            print("Q_values :", q)
-            print("R matrix :", R)"""
-
         term1 = torch.einsum("...j,...ij->...i", pi, R)
         term2 = pi * torch.sum(R, dim=-2)
 
@@ -319,12 +310,6 @@ class DeepEDLoss(LossModule):
         # ── Euler step in simplex tangent space ──────────────────────────────────
         pi_dot   = inflow - outflow                  # mass-conserving by construction
         pi_prime = pi + self.alpha * pi_dot
-
-        """if torch.rand(1) < 0.01:
-            print("Q_values :", q)
-            print("q_bar    :", q_bar)
-            print("excess   :", excess)
-            print("pi_dot   :", pi_dot)"""
 
         # ── Project back onto simplex (handles small numerical drift) ─────────────
         pi_prime = pi_prime.clamp(min=0.0)
