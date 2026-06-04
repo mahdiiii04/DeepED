@@ -9,13 +9,13 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 from torchrl._utils import logger as torchrl_logger
 from torchrl.collectors import Collector
-from torchrl.envs import RewardSum, TransformedEnv
+from torchrl.envs import RewardSum, TransformedEnv, Compose
 from torch.utils.tensorboard import SummaryWriter
 
 from envs import make_env as _make_env_dispatch
 from algos import build_algorithm
 from shared import ResultsDB, extract_avg_policy, evaluate_policy
-from envs.matrix_games import compute_nash_conv
+from envs.matrix_games import compute_nash_conv, MinMaxRewardTransform
 
 def _resolve_cfg(cfg: DictConfig):
     cfg.train.device = "cpu" if not torch.cuda.is_available() else "cuda:0"
@@ -26,14 +26,20 @@ def _resolve_cfg(cfg: DictConfig):
     return cfg
 
 def make_env(cfg: DictConfig, seed: int) -> TransformedEnv:
-    env = _make_env_dispatch(cfg.env_type, cfg, seed)
-    return TransformedEnv(
-        env,
+    base_env = _make_env_dispatch(cfg.env_type, cfg, seed)
+    
+    transforms = [
         RewardSum(
-            in_keys=[env.reward_key],
+            in_keys=[base_env.reward_key],
             out_keys=[("agents", "episode_reward")]
         )
-    )
+    ]
+
+    if cfg.env_type == "matrix_games" and cfg.env.scenario_name == "biased_rps":
+        transforms.append(MinMaxRewardTransform())
+    
+    env = TransformedEnv(base_env, Compose(*transforms))
+    return env
 
 @hydra.main(version_base="1.1", config_path=None)
 def train(cfg: DictConfig):
