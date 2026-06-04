@@ -14,5 +14,14 @@ def make_env(
             device=cfg.env.device,
             seed=seed,
         )
+    elif env_type == "gridworld":
+        from envs.girdworld.envs import GridWorldFactory
+        return GridWorldFactory(
+            scenario=cfg.env.scenario_name,
+            num_envs=cfg.env.num_envs,
+            max_steps=cfg.env.max_steps,
+            device=cfg.env.device,
+            seed=seed,
+        )
     else:
         raise NotImplementedError("Not yet")

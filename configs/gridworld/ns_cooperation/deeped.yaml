@@ -1,0 +1,47 @@
+seed: 0
+experiment_name: NSCooperation
+env_type: gridworld
+algo_name: deep_ed
+sub_exp: ${env.scenario_name}/${algo_name}
+
+env:
+  scenario_name: "ns_cooperative_nav"
+  num_envs: null
+  max_steps: 100
+  device: null
+
+model:
+  shared_params: False
+  centralized_critic: True
+  depth: 2
+  num_cells: 64
+
+collector:
+  frames_per_batch: 51200
+  n_iters: 100
+  total_frames: null
+
+buffer:
+  memory_size: null
+
+train:
+  num_epochs: 20
+  minibatch_size: 4096
+  actor_lr: 1e-4
+  critic_lr: 1e-3
+  max_grad_norm: 40.0
+  device: null
+  tau: 0.005
+
+loss:
+  entropy_eps: 0.01
+  alpha: 0.1
+  gamma: 0.99
+
+eval: 
+  frequency: 10
+
+hydra:
+  run:
+    dir: .  
+  output_subdir: null
