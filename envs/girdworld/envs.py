@@ -954,8 +954,154 @@ class NSRoleShiftNavEnv(AsymmetricNavEnv):
 class NSCooperativeNavEnv(NSGridWorldMixin, CooperativeNavEnv):
     """Non-stationary cooperative navigation."""
 
-class NSShiftingNAvEnv(NSGridWorldMixin, ShiftingAsymmetricNavEnv):
-    """Non-stationary shifting navigation."""
+class NSAsymmetricNavEnv(NSGridWorldMixin, AsymmetricNavEnv):
+    """
+    Non-stationary asymmetric navigation.
+
+    Fixes over the plain mixin wrapper:
+
+    1. **Phase-aware shaping**: each agent is shaped toward the goal that
+       currently gives *it* H_REWARD (agent i → goal i in phase 0,
+       goal (i+1)%n_goals in phase 1, …) rather than toward the nearest
+       goal.  After a goal swap the shaping immediately pulls agents to
+       the right target instead of reinforcing the stale assignment.
+
+    2. **Phase signal in observation**: ``extra_obs_dim = 2 * n_agents``
+       — each agent receives the (row, col) of its currently-preferred
+       goal, normalised to [0, 1].  This makes the non-stationarity
+       directly observable so algorithms can condition on it.
+
+    The H_REWARD assignment follows the same rotation as
+    ShiftingAsymmetricNavEnv:
+        phase p  →  agent i prefers goal (i + p) % n_goals
+    and the phase advances every ``phase_length`` *total* env steps
+    (tracked by NSGridWorldMixin._total_steps).
+    """
+
+    # Each agent gets 2 extra floats: (row, col) of its preferred goal.
+    # extra_obs_dim is *per agent* (base class appends [ne, n_agents, extra_obs_dim]).
+    extra_obs_dim = 2
+
+    def __init__(self, phase_length: int = 550, **kwargs):
+        # Store before super().__init__ so it is available during spec
+        # building (which reads extra_obs_dim).
+        self._asym_phase_length = phase_length
+        super().__init__(phase_length=phase_length, **kwargs)
+        # _phase[ne]: which rotation offset is active, 0 … n_goals-1
+        self.register_buffer(
+            "_asym_phase",
+            torch.zeros(self._num_envs, dtype=torch.long, device=self.device),
+        )
+
+    # ------------------------------------------------------------------
+    # Phase helpers
+    # ------------------------------------------------------------------
+
+    def _preferred_goal_for_agent(self, agent_idx: int) -> torch.Tensor:
+        """[ne] long tensor: index of the goal that gives H_REWARD to agent_idx."""
+        return (agent_idx + self._asym_phase) % self.n_goals
+
+    def _update_phase(self) -> None:
+        """Advance phase counter based on total env steps (from mixin)."""
+        self._asym_phase = (
+            self._total_steps // self._asym_phase_length
+        ) % self.n_goals
+
+    # ------------------------------------------------------------------
+    # Extra observation: preferred-goal position per agent
+    # ------------------------------------------------------------------
+
+    def _extra_obs(self, positions, goals) -> torch.Tensor:
+        """
+        Returns [ne, n_agents, 2] — each agent's currently-preferred
+        goal position, normalised to [0, 1].
+        """
+        ne  = self._num_envs
+        dev = self.device
+        gs  = float(self.grid_size - 1) if self.grid_size > 1 else 1.0
+        idx = torch.arange(ne, device=dev)
+        preferred = torch.stack(
+            [
+                self._goals[idx, self._preferred_goal_for_agent(a)]  # [ne, 2]
+                for a in range(self.n_agents)
+            ],
+            dim=1,  # [ne, n_agents, 2]
+        )
+        return preferred.float() / gs   # [ne, n_agents, 2]
+
+    # ------------------------------------------------------------------
+    # Reward: phase-aware shaping + existing H/L structure
+    # ------------------------------------------------------------------
+
+    def _compute_rewards(self, positions, prev_positions, td_in) -> torch.Tensor:
+        ne  = self._num_envs
+        dev = self.device
+
+        # Advance the phase counter (uses _total_steps kept by mixin).
+        self._update_phase()
+
+        rewards = torch.full(
+            (ne, self.n_agents, 1),
+            self.STEP_PENALTY,
+            dtype=torch.float32,
+            device=dev,
+        )
+
+        # --- Phase-aware potential shaping ----------------------------
+        # Shape each agent toward *its* preferred goal, not the nearest
+        # goal.  This ensures the shaping gradient flips correctly when
+        # the phase changes and never points agents at the wrong target.
+        idx = torch.arange(ne, device=dev)
+        for a in range(self.n_agents):
+            g_idx   = self._preferred_goal_for_agent(a)          # [ne]
+            pg      = self._goals[idx, g_idx]                    # [ne, 2]
+            prev_d  = (prev_positions[:, a] - pg).abs().sum(-1).float()
+            curr_d  = (positions[:, a]      - pg).abs().sum(-1).float()
+            rewards[:, a, 0] += (prev_d - curr_d) * self.SHAPING_COEF
+
+        # --- Coordination reward (inherited structure) ----------------
+        # All agents must be on the *same* goal simultaneously.
+        # The agent whose index matches the goal gets H_REWARD;
+        # all others get L_REWARD.
+        for g in range(self.n_goals):
+            goal   = self._goals[:, g, :]                        # [ne, 2]
+            on_goal = (
+                (positions[:, :, 0] == goal[:, None, 0]) &
+                (positions[:, :, 1] == goal[:, None, 1])
+            )                                                     # [ne, n_agents]
+            all_on = on_goal.all(dim=1)                          # [ne]
+
+            if not all_on.any():
+                continue
+
+            for a in range(self.n_agents):
+                pref_g      = self._preferred_goal_for_agent(a)  # [ne]
+                is_h        = (pref_g == g)                      # [ne] bool
+                h_mask      = all_on & is_h
+                l_mask      = all_on & ~is_h
+                rewards[:, a, 0] += h_mask.float() * self.H_REWARD
+                rewards[:, a, 0] += l_mask.float() * self.L_REWARD
+
+        return rewards
+
+    # ------------------------------------------------------------------
+    # Metrics
+    # ------------------------------------------------------------------
+
+    @torch.no_grad()
+    def compute_metrics(self) -> dict:
+        metrics = {"current_phase": self._asym_phase.float().mean().item()}
+        for g in range(self.n_goals):
+            goal   = self._goals[:, g, :]
+            on     = (
+                (self._positions[:, :, 0] == goal[:, None, 0]) &
+                (self._positions[:, :, 1] == goal[:, None, 1])
+            )
+            all_on = on.all(dim=1).float()
+            any_on = on.any(dim=1).float()
+            metrics[f"all_on_goal_{g}_rate"] = all_on.mean().item()
+            metrics[f"any_on_goal_{g}_rate"] = any_on.mean().item()
+        return metrics
 
 #################### Registery + Factory ######################
 
@@ -965,7 +1111,7 @@ _REGISTRY: dict[str, type[GridWorldEnv]] = {
     "asymmetric_nav": AsymmetricNavEnv,
     "shifting_nav": ShiftingAsymmetricNavEnv,
     "role_nav": NSRoleShiftNavEnv,
-    "ns_role_nav": NSShiftingNAvEnv,
+    "ns_role_nav": NSAsymmetricNavEnv,
 }
 
 def GridWorldFactory(
