@@ -68,10 +68,10 @@ class GridWorldEnv(EnvBase):
 
         # deltas
         self.register_buffer(
-            "_dr", _DR.clone()
+            "_dr", _DR.clone().to(device)
         )
         self.register_buffer(
-            "_dc", _DC.clone()
+            "_dc", _DC.clone().to(device)
         )
 
         self.register_buffer(
