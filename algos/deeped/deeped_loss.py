@@ -245,8 +245,9 @@ class DeepEDLoss(LossModule):
             r_min = reward.min()
             r_max = reward.max()
 
-            scaled_reward = (reward - r_min) / (r_max - r_min + 1e-8) 
+            #scaled_reward = (reward - r_min) / (r_max - r_min + 1e-8) 
             #scaled_reward = reward / self.reward_scale
+            scaled_reward = reward
             target_q = scaled_reward + self.gamma * (1.0 - done) * v_next
 
         action = tensordict.get(self.tensor_keys.action)

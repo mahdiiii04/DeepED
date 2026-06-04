@@ -18,7 +18,7 @@ model:
 
 collector:
   frames_per_batch: 51200
-  n_iters: 100
+  n_iters: 200
   total_frames: null
 
 buffer:
