@@ -1,12 +1,12 @@
 seed: 0
-experiment_name: BiasedRPS
-env_type: matrix_games
-algo_name: vdn
+experiment_name: NSRoleShifting
+env_type: gridworld
+algo_name: qmix
 policy_type: qnet
 sub_exp: ${env.scenario_name}/${algo_name}
 
 env:
-  scenario_name: biased_rps
+  scenario_name: ns_role_nav
   num_envs: null          
   max_steps: 100
   device: null            
@@ -18,7 +18,7 @@ model:
 
 collector:
   frames_per_batch: 51200
-  n_iters: 300
+  n_iters: 500
   total_frames: null      
 
 buffer:
@@ -37,7 +37,7 @@ loss:
   eps_init: 0.3        
   eps_end: 0.01        
   eps_anneal_frac: 0.5
-  mixer_type: vdn
+  mixer_type: qmix
 
 eval:
   frequency: 10

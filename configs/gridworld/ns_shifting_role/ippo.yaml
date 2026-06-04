@@ -1,24 +1,24 @@
 seed: 0
-experiment_name: BattleOfSexes
-env_type: matrix_games
-algo_name: vdn
-policy_type: qnet
+experiment_name: NSRoleShifting
+env_type: gridworld
+algo_name: ippo
 sub_exp: ${env.scenario_name}/${algo_name}
 
 env:
-  scenario_name: battle_of_sexes
+  scenario_name: ns_role_nav
   num_envs: null          
   max_steps: 100
   device: null            
 
 model:
   shared_params: False
+  centralized_critic: False
   depth: 2
   num_cells: 64
 
 collector:
   frames_per_batch: 51200
-  n_iters: 300
+  n_iters: 500
   total_frames: null      
 
 buffer:
@@ -27,17 +27,15 @@ buffer:
 train:
   num_epochs: 10
   minibatch_size: 4096
-  lr: 1e-3
+  lr: 1e-4
   max_grad_norm: 40.0
   device: null            
 
 loss:
+  clip_epsilon: 0.2
+  entropy_eps: 0.01
   gamma: 0.99
-  tau: 0.005          
-  eps_init: 0.3        
-  eps_end: 0.01        
-  eps_anneal_frac: 0.5
-  mixer_type: vdn
+  lmbda: 0.9
 
 eval:
   frequency: 10

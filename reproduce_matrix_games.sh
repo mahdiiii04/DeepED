@@ -3,20 +3,14 @@
 CUDA_VISIBLE_DEVICES=0 python ./scripts/train.py --config-path ../configs/matrix_games/biased_rps --config-name mappo --multirun seed=0,1,2,3,4,5,6,7,8,9
 CUDA_VISIBLE_DEVICES=0 python ./scripts/train.py --config-path ../configs/matrix_games/biased_rps --config-name ippo --multirun seed=0,1,2,3,4,5,6,7,8,9
 CUDA_VISIBLE_DEVICES=0 python ./scripts/train.py --config-path ../configs/matrix_games/biased_rps --config-name deeped --multirun seed=0,1,2,3,4,5,6,7,8,9
-CUDA_VISIBLE_DEVICES=0 python ./scripts/train.py --config-path ../configs/matrix_games/biased_rps --config-name maddpg --multirun seed=0,1,2,3,4,5,6,7,8,9
 CUDA_VISIBLE_DEVICES=0 python ./scripts/train.py --config-path ../configs/matrix_games/biased_rps --config-name qmix --multirun seed=0,1,2,3,4,5,6,7,8,9
-CUDA_VISIBLE_DEVICES=0 python ./scripts/train.py --config-path ../configs/matrix_games/biased_rps --config-name vdn --multirun seed=0,1,2,3,4,5,6,7,8,9
 
 CUDA_VISIBLE_DEVICES=0 python ./scripts/train.py --config-path ../configs/matrix_games/stag_hunt --config-name mappo --multirun seed=0,1,2,3,4,5,6,7,8,9
 CUDA_VISIBLE_DEVICES=0 python ./scripts/train.py --config-path ../configs/matrix_games/stag_hunt --config-name ippo --multirun seed=0,1,2,3,4,5,6,7,8,9
 CUDA_VISIBLE_DEVICES=0 python ./scripts/train.py --config-path ../configs/matrix_games/stag_hunt --config-name deeped --multirun seed=0,1,2,3,4,5,6,7,8,9
-CUDA_VISIBLE_DEVICES=0 python ./scripts/train.py --config-path ../configs/matrix_games/stag_hunt --config-name maddpg --multirun seed=0,1,2,3,4,5,6,7,8,9
 CUDA_VISIBLE_DEVICES=0 python ./scripts/train.py --config-path ../configs/matrix_games/stag_hunt --config-name qmix --multirun seed=0,1,2,3,4,5,6,7,8,9
-CUDA_VISIBLE_DEVICES=0 python ./scripts/train.py --config-path ../configs/matrix_games/stag_hunt --config-name vdn --multirun seed=0,1,2,3,4,5,6,7,8,9
 
 CUDA_VISIBLE_DEVICES=0 python ./scripts/train.py --config-path ../configs/matrix_games/battle_of_sexes --config-name mappo --multirun seed=0,1,2,3,4,5,6,7,8,9
 CUDA_VISIBLE_DEVICES=0 python ./scripts/train.py --config-path ../configs/matrix_games/battle_of_sexes --config-name ippo --multirun seed=0,1,2,3,4,5,6,7,8,9
 CUDA_VISIBLE_DEVICES=0 python ./scripts/train.py --config-path ../configs/matrix_games/battle_of_sexes --config-name deeped --multirun seed=0,1,2,3,4,5,6,7,8,9
-CUDA_VISIBLE_DEVICES=0 python ./scripts/train.py --config-path ../configs/matrix_games/battle_of_sexes --config-name maddpg --multirun seed=0,1,2,3,4,5,6,7,8,9
 CUDA_VISIBLE_DEVICES=0 python ./scripts/train.py --config-path ../configs/matrix_games/battle_of_sexes --config-name qmix --multirun seed=0,1,2,3,4,5,6,7,8,9
-CUDA_VISIBLE_DEVICES=0 python ./scripts/train.py --config-path ../configs/matrix_games/battle_of_sexes --config-name vdn --multirun seed=0,1,2,3,4,5,6,7,8,9

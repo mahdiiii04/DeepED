@@ -386,7 +386,9 @@ class GridWorldEnv(EnvBase):
     ) -> dict:
         """
         Return a dict of scalar metrics for the *current* positions.
-        Subclasses can override to add domain-specific metrics.
+        All domain-specific metrics (including phase and coordination rates)
+        are reported here. Subclasses override this method — do NOT define
+        ``compute_metrics``; it will be ignored.
         """
         return {}
 
@@ -603,18 +605,18 @@ class AsymmetricNavEnv(GridWorldEnv):
         return rewards
 
     @torch.no_grad()
-    def compute_metrics(self) -> dict:
+    def get_extra_metrics(self) -> dict:
         metrics = {}
 
         any_all_on = torch.zeros(self._num_envs, dtype=torch.bool, device=self.device)
 
         for i in range(self.n_goals):
-            goal   = self._goals[:, i, :]           
+            goal   = self._goals[:, i, :]
             on     = (
                 (self._positions[:, :, 0] == goal[:, None, 0]) &
                 (self._positions[:, :, 1] == goal[:, None, 1])
-            )                                      
-            all_on = on.all(dim=1)                   
+            )
+            all_on = on.all(dim=1)
             any_all_on |= all_on
 
             metrics[f"all_on_goal_{i}_rate"] = all_on.float().mean().item()
@@ -658,6 +660,21 @@ class ShiftingAsymmetricNavEnv(GridWorldEnv):
             "_global_steps",
             torch.zeros(self._num_envs, dtype=torch.long, device=self.device),
         )
+        # Non-stationarity gap tracking: best mean reward seen before the
+        # last phase change, and the running mean reward since then.
+        self.register_buffer(
+            "_best_reward_before_phase",
+            torch.full((self._num_envs,), float("-inf"), dtype=torch.float32, device=self.device),
+        )
+        self.register_buffer(
+            "_reward_sum_this_phase",
+            torch.zeros(self._num_envs, dtype=torch.float32, device=self.device),
+        )
+        self.register_buffer(
+            "_reward_steps_this_phase",
+            torch.zeros(self._num_envs, dtype=torch.long, device=self.device),
+        )
+        self._prev_phase = torch.zeros(self._num_envs, dtype=torch.long, device=self.device)
 
     def _h_reward_goal_for_agent(
         self, agent_idx: int
@@ -689,9 +706,28 @@ class ShiftingAsymmetricNavEnv(GridWorldEnv):
 
         # update phase
         self._global_steps.add_(1)
-        self._phase = (
+        new_phase = (
             self._global_steps // self._reward_phase_length
         ) % self.n_goals
+
+        # Detect phase change: save best-reward snapshot and reset accumulators.
+        phase_changed = new_phase != self._prev_phase
+        if phase_changed.any():
+            # For envs whose phase just flipped, record best reward from the
+            # previous phase (use per-step mean; guard against div-by-zero).
+            steps = self._reward_steps_this_phase.float().clamp(min=1)
+            mean_reward_prev = self._reward_sum_this_phase / steps
+            # Only update best_reward for envs that actually changed phase.
+            self._best_reward_before_phase = torch.where(
+                phase_changed,
+                mean_reward_prev,
+                self._best_reward_before_phase,
+            )
+            self._reward_sum_this_phase[phase_changed] = 0.0
+            self._reward_steps_this_phase[phase_changed] = 0
+
+        self._prev_phase = new_phase.clone()
+        self._phase = new_phase
 
         rewards = torch.full(
             (ne, self.n_agents, 1),
@@ -748,10 +784,15 @@ class ShiftingAsymmetricNavEnv(GridWorldEnv):
                     l_reward_mask.float() * self.L_REWARD
                 )
 
+        # Accumulate mean reward per env (mean over agents) for gap tracking.
+        mean_reward_step = rewards[:, :, 0].mean(dim=1)  # [ne]
+        self._reward_sum_this_phase += mean_reward_step
+        self._reward_steps_this_phase += 1
+
         return rewards
 
     @torch.no_grad()
-    def compute_metrics(self):
+    def get_extra_metrics(self) -> dict:
         metrics = {"current_phase": self._phase.float().mean().item()}
         for g in range(self.n_goals):
             goal = self._goals[:, g, :]
@@ -761,6 +802,21 @@ class ShiftingAsymmetricNavEnv(GridWorldEnv):
             )
             metrics[f"any_on_goal_{g}"] = on.any(dim=1).float().mean().item()
             metrics[f"all_on_goal_{g}"] = on.all(dim=1).float().mean().item()
+
+        # Phase-change recovery gap: how far is the current per-step mean
+        # reward from the best per-step mean reward achieved before the last
+        # phase change?  0 = fully recovered; positive = still lagging.
+        # Only meaningful after at least one phase change has occurred.
+        has_baseline = (self._best_reward_before_phase != float("-inf")).any()
+        if has_baseline:
+            steps = self._reward_steps_this_phase.float().clamp(min=1)
+            current_mean = self._reward_sum_this_phase / steps
+            gap = (self._best_reward_before_phase - current_mean).clamp(min=0)
+            # Average only over envs that have a valid baseline.
+            valid = self._best_reward_before_phase != float("-inf")
+            metrics["phase_change_reward_gap"] = (
+                gap[valid].mean().item() if valid.any() else 0.0
+            )
         return metrics
     
 class NSRoleShiftNavEnv(AsymmetricNavEnv):
@@ -797,6 +853,20 @@ class NSRoleShiftNavEnv(AsymmetricNavEnv):
             torch.zeros(self._num_envs, dtype=torch.long, device=self.device),
         )
         self._goals_initialized = False
+        # Phase-change gap tracking.
+        self.register_buffer(
+            "_rs_best_reward_before_phase",
+            torch.full((self._num_envs,), float("-inf"), dtype=torch.float32, device=self.device),
+        )
+        self.register_buffer(
+            "_rs_reward_sum_this_phase",
+            torch.zeros(self._num_envs, dtype=torch.float32, device=self.device),
+        )
+        self.register_buffer(
+            "_rs_reward_steps_this_phase",
+            torch.zeros(self._num_envs, dtype=torch.long, device=self.device),
+        )
+        self._rs_prev_phase = torch.zeros(self._num_envs, dtype=torch.long, device=self.device)
 
     # ------------------------------------------------------------------
     # Goals: fixed after first reset, never re-randomised
@@ -882,6 +952,21 @@ class NSRoleShiftNavEnv(AsymmetricNavEnv):
         ne  = self._num_envs
         dev = self.device
 
+        # Detect phase change before updating.
+        new_phase = (self._total_steps // self._rs_phase_length) % self.n_goals
+        phase_changed = new_phase != self._rs_prev_phase
+        if phase_changed.any():
+            steps = self._rs_reward_steps_this_phase.float().clamp(min=1)
+            mean_reward_prev = self._rs_reward_sum_this_phase / steps
+            self._rs_best_reward_before_phase = torch.where(
+                phase_changed,
+                mean_reward_prev,
+                self._rs_best_reward_before_phase,
+            )
+            self._rs_reward_sum_this_phase[phase_changed] = 0.0
+            self._rs_reward_steps_this_phase[phase_changed] = 0
+        self._rs_prev_phase = new_phase.clone()
+
         rewards = torch.full(
             (ne, self.n_agents, 1),
             self.STEP_PENALTY,
@@ -914,6 +999,11 @@ class NSRoleShiftNavEnv(AsymmetricNavEnv):
                 rewards[:, a, 0] += (all_on & is_h).float()  * self.H_REWARD
                 rewards[:, a, 0] += (all_on & ~is_h).float() * self.L_REWARD
 
+        # Accumulate for gap metric.
+        mean_reward_step = rewards[:, :, 0].mean(dim=1)
+        self._rs_reward_sum_this_phase += mean_reward_step
+        self._rs_reward_steps_this_phase += 1
+
         return rewards
 
     # ------------------------------------------------------------------
@@ -921,7 +1011,7 @@ class NSRoleShiftNavEnv(AsymmetricNavEnv):
     # ------------------------------------------------------------------
 
     @torch.no_grad()
-    def compute_metrics(self) -> dict:
+    def get_extra_metrics(self) -> dict:
         metrics = {"current_phase": self._rs_phase.float().mean().item()}
         for g in range(self.n_goals):
             goal  = self._goals[:, g, :]
@@ -949,6 +1039,16 @@ class NSRoleShiftNavEnv(AsymmetricNavEnv):
         ).all(dim=1).float()
         metrics["phase_correct_rate"] = on_hot.mean().item()
         metrics["phase_stale_rate"]   = on_cold.mean().item()
+
+        # Phase-change recovery gap.
+        has_baseline = (self._rs_best_reward_before_phase != float("-inf")).any()
+        if has_baseline:
+            steps = self._rs_reward_steps_this_phase.float().clamp(min=1)
+            current_mean = self._rs_reward_sum_this_phase / steps
+            gap = (self._rs_best_reward_before_phase - current_mean).clamp(min=0)
+            valid = self._rs_best_reward_before_phase != float("-inf")
+            metrics["phase_change_reward_gap"] = gap[valid].mean().item() if valid.any() else 0.0
+
         return metrics
 
 class NSCooperativeNavEnv(NSGridWorldMixin, CooperativeNavEnv):
@@ -992,6 +1092,20 @@ class NSAsymmetricNavEnv(NSGridWorldMixin, AsymmetricNavEnv):
             "_asym_phase",
             torch.zeros(self._num_envs, dtype=torch.long, device=self.device),
         )
+        # Phase-change gap tracking.
+        self.register_buffer(
+            "_asym_best_reward_before_phase",
+            torch.full((self._num_envs,), float("-inf"), dtype=torch.float32, device=self.device),
+        )
+        self.register_buffer(
+            "_asym_reward_sum_this_phase",
+            torch.zeros(self._num_envs, dtype=torch.float32, device=self.device),
+        )
+        self.register_buffer(
+            "_asym_reward_steps_this_phase",
+            torch.zeros(self._num_envs, dtype=torch.long, device=self.device),
+        )
+        self._asym_prev_phase = torch.zeros(self._num_envs, dtype=torch.long, device=self.device)
 
     # ------------------------------------------------------------------
     # Phase helpers
@@ -1038,6 +1152,19 @@ class NSAsymmetricNavEnv(NSGridWorldMixin, AsymmetricNavEnv):
         dev = self.device
 
         # Advance the phase counter (uses _total_steps kept by mixin).
+        new_phase = (self._total_steps // self._asym_phase_length) % self.n_goals
+        phase_changed = new_phase != self._asym_prev_phase
+        if phase_changed.any():
+            steps = self._asym_reward_steps_this_phase.float().clamp(min=1)
+            mean_reward_prev = self._asym_reward_sum_this_phase / steps
+            self._asym_best_reward_before_phase = torch.where(
+                phase_changed,
+                mean_reward_prev,
+                self._asym_best_reward_before_phase,
+            )
+            self._asym_reward_sum_this_phase[phase_changed] = 0.0
+            self._asym_reward_steps_this_phase[phase_changed] = 0
+        self._asym_prev_phase = new_phase.clone()
         self._update_phase()
 
         rewards = torch.full(
@@ -1082,6 +1209,11 @@ class NSAsymmetricNavEnv(NSGridWorldMixin, AsymmetricNavEnv):
                 rewards[:, a, 0] += h_mask.float() * self.H_REWARD
                 rewards[:, a, 0] += l_mask.float() * self.L_REWARD
 
+        # Accumulate for gap metric.
+        mean_reward_step = rewards[:, :, 0].mean(dim=1)
+        self._asym_reward_sum_this_phase += mean_reward_step
+        self._asym_reward_steps_this_phase += 1
+
         return rewards
 
     # ------------------------------------------------------------------
@@ -1089,7 +1221,7 @@ class NSAsymmetricNavEnv(NSGridWorldMixin, AsymmetricNavEnv):
     # ------------------------------------------------------------------
 
     @torch.no_grad()
-    def compute_metrics(self) -> dict:
+    def get_extra_metrics(self) -> dict:
         metrics = {"current_phase": self._asym_phase.float().mean().item()}
         for g in range(self.n_goals):
             goal   = self._goals[:, g, :]
@@ -1101,6 +1233,16 @@ class NSAsymmetricNavEnv(NSGridWorldMixin, AsymmetricNavEnv):
             any_on = on.any(dim=1).float()
             metrics[f"all_on_goal_{g}_rate"] = all_on.mean().item()
             metrics[f"any_on_goal_{g}_rate"] = any_on.mean().item()
+
+        # Phase-change recovery gap.
+        has_baseline = (self._asym_best_reward_before_phase != float("-inf")).any()
+        if has_baseline:
+            steps = self._asym_reward_steps_this_phase.float().clamp(min=1)
+            current_mean = self._asym_reward_sum_this_phase / steps
+            gap = (self._asym_best_reward_before_phase - current_mean).clamp(min=0)
+            valid = self._asym_best_reward_before_phase != float("-inf")
+            metrics["phase_change_reward_gap"] = gap[valid].mean().item() if valid.any() else 0.0
+
         return metrics
 
 #################### Registery + Factory ######################
