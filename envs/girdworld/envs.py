@@ -954,6 +954,9 @@ class NSRoleShiftNavEnv(AsymmetricNavEnv):
 class NSCooperativeNavEnv(NSGridWorldMixin, CooperativeNavEnv):
     """Non-stationary cooperative navigation."""
 
+class NSShiftingNAvEnv(NSGridWorldMixin, ShiftingAsymmetricNavEnv):
+    """Non-stationary shifting navigation."""
+
 #################### Registery + Factory ######################
 
 _REGISTRY: dict[str, type[GridWorldEnv]] = {
@@ -962,6 +965,7 @@ _REGISTRY: dict[str, type[GridWorldEnv]] = {
     "asymmetric_nav": AsymmetricNavEnv,
     "shifting_nav": ShiftingAsymmetricNavEnv,
     "role_nav": NSRoleShiftNavEnv,
+    "ns_role_nav": NSShiftingNAvEnv,
 }
 
 def GridWorldFactory(

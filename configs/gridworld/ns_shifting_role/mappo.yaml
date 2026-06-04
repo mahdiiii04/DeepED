@@ -5,7 +5,7 @@ algo_name: mappo
 sub_exp: ${env.scenario_name}/${algo_name}
 
 env:
-  scenario_name: shifting_nav
+  scenario_name: "ns_role_nav"
   num_envs: null          
   max_steps: 100
   device: null            
