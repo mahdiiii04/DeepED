@@ -1082,7 +1082,7 @@ class NSAsymmetricNavEnv(NSGridWorldMixin, AsymmetricNavEnv):
     # extra_obs_dim is *per agent* (base class appends [ne, n_agents, extra_obs_dim]).
     extra_obs_dim = 2
 
-    def __init__(self, phase_length: int = 2550, **kwargs):
+    def __init__(self, phase_length: int = 1050, **kwargs):
         # Store before super().__init__ so it is available during spec
         # building (which reads extra_obs_dim).
         self._asym_phase_length = phase_length
