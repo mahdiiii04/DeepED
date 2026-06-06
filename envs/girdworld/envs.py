@@ -841,7 +841,7 @@ class NSRoleShiftNavEnv(AsymmetricNavEnv):
 
     extra_obs_dim = 2
 
-    def __init__(self, phase_length: int = 550, **kwargs):
+    def __init__(self, phase_length: int = 1950, **kwargs):  # bring it back to 550 for regular test
         self._rs_phase_length = phase_length
         super().__init__(**kwargs)
         self.register_buffer(
