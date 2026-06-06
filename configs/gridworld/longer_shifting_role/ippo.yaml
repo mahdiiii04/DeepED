@@ -1,19 +1,19 @@
 seed: 0
-experiment_name: RoleShifting
+experiment_name: LongerRoleShifting
 env_type: gridworld
-algo_name: mappo
+algo_name: ippo
 sub_exp: ${env.scenario_name}/${algo_name}
 
 env:
   scenario_name: role_nav
   num_envs: null          
   max_steps: 100
-  device: null        
-  pref_phase_length: 550    
+  device: null    
+  pref_phase_length: 2550        
 
 model:
   shared_params: False
-  centralized_critic: True
+  centralized_critic: False
   depth: 2
   num_cells: 64
 

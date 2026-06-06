@@ -9,6 +9,8 @@ env:
   num_envs: null
   max_steps: 100
   device: null
+  pref_phase_length: 550
+  goal_phase_length: 1050
 
 model:
   shared_params: False

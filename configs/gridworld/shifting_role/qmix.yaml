@@ -9,7 +9,8 @@ env:
   scenario_name: role_nav
   num_envs: null          
   max_steps: 100
-  device: null            
+  device: null    
+  pref_phase_length: 550        
 
 model:
   shared_params: False

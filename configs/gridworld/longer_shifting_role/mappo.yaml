@@ -1,5 +1,5 @@
 seed: 0
-experiment_name: RoleShifting
+experiment_name: LongerRoleShifting
 env_type: gridworld
 algo_name: mappo
 sub_exp: ${env.scenario_name}/${algo_name}
@@ -9,7 +9,7 @@ env:
   num_envs: null          
   max_steps: 100
   device: null        
-  pref_phase_length: 550    
+  pref_phase_length: 250    
 
 model:
   shared_params: False

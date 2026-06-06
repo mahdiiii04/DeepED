@@ -7,6 +7,7 @@ from torchrl.data import (
     OneHot,
     Composite,
 )
+import inspect
 
 N_MOVE_ACTIONS = 5 # stay / up / down / left / right
 
@@ -623,201 +624,6 @@ class AsymmetricNavEnv(GridWorldEnv):
 
         metrics["success_rate"] = any_all_on.float().mean().item()
         return metrics
-
-class ShiftingAsymmetricNavEnv(GridWorldEnv):
-    """
-    N agents, N goals.
-
-    The H_REWARD assignment rotates every `reward_phase_length` total steps:
-      Phase 0: agent i gets H_REWARD at goal i
-      Phase 1: agent i gets H_REWARD at goal (i+1) % n_goals
-      ...
-    This forces agents to renegotiate roles when the phase flips.
-    """
-
-    n_agents = 2
-    n_goals = 2
-    grid_size = 8
-    extra_obs_dim = 0 
-
-    H_REWARD = 2.0
-    L_REWARD = 1.0
-    STEP_PENALTY = -0.01
-    SHAPING_COEF = 0.1
-
-    def __init__(
-        self, 
-        reward_phase_length: int = 1000, 
-        **kwargs
-    ):
-        self._reward_phase_length = reward_phase_length
-        super().__init__(**kwargs)
-        self.register_buffer(
-            "_phase",
-            torch.zeros(self._num_envs, dtype=torch.long, device=self.device),
-        )
-        self.register_buffer(
-            "_global_steps",
-            torch.zeros(self._num_envs, dtype=torch.long, device=self.device),
-        )
-        # Non-stationarity gap tracking: best mean reward seen before the
-        # last phase change, and the running mean reward since then.
-        self.register_buffer(
-            "_best_reward_before_phase",
-            torch.full((self._num_envs,), float("-inf"), dtype=torch.float32, device=self.device),
-        )
-        self.register_buffer(
-            "_reward_sum_this_phase",
-            torch.zeros(self._num_envs, dtype=torch.float32, device=self.device),
-        )
-        self.register_buffer(
-            "_reward_steps_this_phase",
-            torch.zeros(self._num_envs, dtype=torch.long, device=self.device),
-        )
-        self._prev_phase = torch.zeros(self._num_envs, dtype=torch.long, device=self.device)
-
-    def _h_reward_goal_for_agent(
-        self, agent_idx: int
-    ) -> torch.Tensor:
-        """
-        Returns [ne] long tensor: which goal gives H_REWARD to agent_idx
-        given the current phase per env.
-        """
-        return (agent_idx + self._phase) % self.n_goals
-
-    def _min_dist_to_any_goal(
-        self, positions
-    ):
-        all_dists = torch.stack(
-            [
-                (positions - self._goals[:, g, :][:, None, :])
-                .abs().sum(-1).float()
-                for g in range(self.n_goals)
-            ],
-            dim=-1,
-        )
-        return all_dists.min(dim=-1).values
-
-    def _compute_rewards(
-        self, positions, prev_positions, td_in
-    ):
-        ne  = self._num_envs
-        dev = self.device
-
-        # update phase
-        self._global_steps.add_(1)
-        new_phase = (
-            self._global_steps // self._reward_phase_length
-        ) % self.n_goals
-
-        # Detect phase change: save best-reward snapshot and reset accumulators.
-        phase_changed = new_phase != self._prev_phase
-        if phase_changed.any():
-            # For envs whose phase just flipped, record best reward from the
-            # previous phase (use per-step mean; guard against div-by-zero).
-            steps = self._reward_steps_this_phase.float().clamp(min=1)
-            mean_reward_prev = self._reward_sum_this_phase / steps
-            # Only update best_reward for envs that actually changed phase.
-            self._best_reward_before_phase = torch.where(
-                phase_changed,
-                mean_reward_prev,
-                self._best_reward_before_phase,
-            )
-            self._reward_sum_this_phase[phase_changed] = 0.0
-            self._reward_steps_this_phase[phase_changed] = 0
-
-        self._prev_phase = new_phase.clone()
-        self._phase = new_phase
-
-        rewards = torch.full(
-            (ne, self.n_agents, 1),
-            self.STEP_PENALTY,
-            dtype=torch.float32,
-            device=dev,
-        )
-
-        # shaping toward nearest goal
-        prev_min = self._min_dist_to_any_goal(prev_positions)
-        curr_min = self._min_dist_to_any_goal(positions)
-
-        shaping = (prev_min - curr_min) * self.SHAPING_COEF
-        rewards[:, :, 0] += shaping
-
-        # coordination rewards
-        for g in range(self.n_goals):
-
-            goal = self._goals[:, g, :]
-
-            # [ne, n_agents]
-            on_goal = (
-                (positions[:, :, 0] == goal[:, None, 0]) &
-                (positions[:, :, 1] == goal[:, None, 1])
-            )
-
-            # ONLY reward if ALL agents coordinated
-            # on the SAME goal simultaneously
-            all_on = on_goal.all(dim=1)  # [ne]
-
-            if not all_on.any():
-                continue
-
-            for a in range(self.n_agents):
-
-                # which goal currently gives high reward
-                # to this agent
-                h_goal = self._h_reward_goal_for_agent(a)
-
-                # envs where THIS goal is the preferred one
-                is_h_goal = (h_goal == g)
-
-                # coordinated on preferred goal
-                h_reward_mask = all_on & is_h_goal
-
-                # coordinated on non-preferred goal
-                l_reward_mask = all_on & (~is_h_goal)
-
-                rewards[:, a, 0] += (
-                    h_reward_mask.float() * self.H_REWARD
-                )
-
-                rewards[:, a, 0] += (
-                    l_reward_mask.float() * self.L_REWARD
-                )
-
-        # Accumulate mean reward per env (mean over agents) for gap tracking.
-        mean_reward_step = rewards[:, :, 0].mean(dim=1)  # [ne]
-        self._reward_sum_this_phase += mean_reward_step
-        self._reward_steps_this_phase += 1
-
-        return rewards
-
-    @torch.no_grad()
-    def get_extra_metrics(self) -> dict:
-        metrics = {"current_phase": self._phase.float().mean().item()}
-        for g in range(self.n_goals):
-            goal = self._goals[:, g, :]
-            on = (
-                (self._positions[:, :, 0] == goal[:, None, 0]) &
-                (self._positions[:, :, 1] == goal[:, None, 1])
-            )
-            metrics[f"any_on_goal_{g}"] = on.any(dim=1).float().mean().item()
-            metrics[f"all_on_goal_{g}"] = on.all(dim=1).float().mean().item()
-
-        # Phase-change recovery gap: how far is the current per-step mean
-        # reward from the best per-step mean reward achieved before the last
-        # phase change?  0 = fully recovered; positive = still lagging.
-        # Only meaningful after at least one phase change has occurred.
-        has_baseline = (self._best_reward_before_phase != float("-inf")).any()
-        if has_baseline:
-            steps = self._reward_steps_this_phase.float().clamp(min=1)
-            current_mean = self._reward_sum_this_phase / steps
-            gap = (self._best_reward_before_phase - current_mean).clamp(min=0)
-            # Average only over envs that have a valid baseline.
-            valid = self._best_reward_before_phase != float("-inf")
-            metrics["phase_change_reward_gap"] = (
-                gap[valid].mean().item() if valid.any() else 0.0
-            )
-        return metrics
     
 class NSRoleShiftNavEnv(AsymmetricNavEnv):
     """
@@ -841,8 +647,8 @@ class NSRoleShiftNavEnv(AsymmetricNavEnv):
 
     extra_obs_dim = 2
 
-    def __init__(self, phase_length: int = 2550, **kwargs):  # bring it back to 550 for regular test
-        self._rs_phase_length = phase_length
+    def __init__(self, pref_phase_length: int = 550, **kwargs):
+        self._rs_phase_length = pref_phase_length
         super().__init__(**kwargs)
         self.register_buffer(
             "_total_steps",
@@ -1082,11 +888,11 @@ class NSAsymmetricNavEnv(NSGridWorldMixin, AsymmetricNavEnv):
     # extra_obs_dim is *per agent* (base class appends [ne, n_agents, extra_obs_dim]).
     extra_obs_dim = 2
 
-    def __init__(self, phase_length: int = 1050, **kwargs):
+    def __init__(self, pref_phase_length: int = 1050, goal_phase_length: int = 1050, **kwargs):
         # Store before super().__init__ so it is available during spec
         # building (which reads extra_obs_dim).
-        self._asym_phase_length = phase_length
-        super().__init__(phase_length=phase_length, **kwargs)
+        self._asym_phase_length = pref_phase_length
+        super().__init__(phase_length=goal_phase_length, **kwargs)
         # _phase[ne]: which rotation offset is active, 0 … n_goals-1
         self.register_buffer(
             "_asym_phase",
@@ -1251,7 +1057,6 @@ _REGISTRY: dict[str, type[GridWorldEnv]] = {
     "cooperative_nav": CooperativeNavEnv,
     "ns_cooperative_nav": NSCooperativeNavEnv,
     "asymmetric_nav": AsymmetricNavEnv,
-    "shifting_nav": ShiftingAsymmetricNavEnv,
     "role_nav": NSRoleShiftNavEnv,
     "ns_role_nav": NSAsymmetricNavEnv,
 }
@@ -1270,10 +1075,15 @@ def GridWorldFactory(
             f"Available: {sorted(_REGISTRY.keys())}."
         )
     cls = _REGISTRY[scenario]
+
+    # Only forward kwargs the class constructor actually accepts
+    valid_params = inspect.signature(cls).parameters
+    filtered = {k: v for k, v in kwargs.items() if k in valid_params}
+
     return cls(
         num_envs=num_envs,
         max_steps=max_steps,
         device=device,
         seed=seed,
-        **kwargs,
+        **filtered,
     )

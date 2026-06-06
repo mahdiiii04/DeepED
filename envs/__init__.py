@@ -15,12 +15,14 @@ def make_env(
             seed=seed,
         )
     elif env_type == "gridworld":
-        from envs.girdworld.envs import GridWorldFactory
+        from envs.gridworld.envs import GridWorldFactory
         return GridWorldFactory(
             scenario=cfg.env.scenario_name,
             num_envs=cfg.env.num_envs,
             max_steps=cfg.env.max_steps,
             device=cfg.env.device,
+            pref_phase_length=cfg.env.get("pref_phase_length", 550),
+            goal_phase_length=cfg.env.get("goal_phase_length", 550),
             seed=seed,
         )
     else:
