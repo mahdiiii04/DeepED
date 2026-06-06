@@ -70,6 +70,7 @@ class QMIX:
                 annealing_num_steps=int(cfg.collector.total_frames * cfg.loss.eps_anneal_frac),
                 action_key=env.action_key,
                 spec=env.full_action_spec_unbatched,
+                device=device,
             ),
         )
         if cfg.loss.mixer_type == "qmix":
