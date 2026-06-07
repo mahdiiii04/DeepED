@@ -45,6 +45,7 @@ def make_env(cfg: DictConfig, seed: int) -> TransformedEnv:
 def train(cfg: DictConfig):
 
     cfg = _resolve_cfg(cfg)
+    torch.manual_seed(cfg.seed)
 
     env_type = cfg.env_type
     algo_name = cfg.algo_name
@@ -115,11 +116,11 @@ def train(cfg: DictConfig):
 
         mean_episode_reward = episode_r[:, -1].mean().item()
 
-        avg_policy = extract_avg_policy(
+        """avg_policy = extract_avg_policy(
             env,
             algo.policy,
             policy_type=cfg.get("policy_type", "actor"),
-        )
+        )"""
         
         scalar_metrics = {
             "reward/mean_episode_reward": mean_episode_reward,
@@ -128,6 +129,11 @@ def train(cfg: DictConfig):
             **(env.get_extra_metrics() if hasattr(env, "get_extra_metrics") else {}),
         }
         if cfg.env_type == "matrix_games":
+            avg_policy = extract_avg_policy(
+                env,
+                algo.policy,
+                policy_type=cfg.get("policy_type", "actor"),
+            )
             nash = compute_nash_conv(
                 env,
                 avg_policy,
@@ -137,7 +143,7 @@ def train(cfg: DictConfig):
 
         #──── logging ────────────────────────────────────────────
         db.log_metrics(run_id, global_step, scalar_metrics)
-        db.log_policy(run_id, global_step, avg_policy)
+        #db.log_policy(run_id, global_step, avg_policy)
 
         for k, v in scalar_metrics.items():
             writer.add_scalar(k, v, global_step=global_step)
