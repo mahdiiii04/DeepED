@@ -151,7 +151,7 @@ def train(cfg: DictConfig):
             writer.add_scalar("eval/mean_episode_reward", eval_reward, global_step=global_step)
             torchrl_logger.info(f"Eval reward: {eval_reward:.3f}")
 
-        torchrl_logger.info(f"Iteration {i} | Frames {total_frames:>8d}")
+        torchrl_logger.info(f"Iteration {i} | Frames {total_frames:>8d} | Mean Reward {mean_episode_reward:.3f}")
         
     #──── teardown ────────────────────────────────────────────────
     writer.close()
