@@ -1,0 +1,46 @@
+seed: 0
+experiment_name: SimpleSpread
+env_type: vmas
+algo_name: ippo
+sub_exp: ${env.scenario_name}/${algo_name}
+
+env:
+  scenario_name: simple_spread
+  num_envs: null          
+  max_steps: 100
+  device: null            
+
+model:
+  shared_params: False
+  centralized_critic: False
+  depth: 2
+  num_cells: 256
+
+collector:
+  frames_per_batch: 60_000
+  n_iters: 500
+  total_frames: null      
+
+buffer:
+  memory_size: null      
+
+train:
+  num_epochs: 30
+  minibatch_size: 4096
+  lr: 5e-4
+  max_grad_norm: 40.0
+  device: null            
+
+loss:
+  clip_epsilon: 0.2
+  entropy_eps: 0.01
+  gamma: 0.9
+  lmbda: 0.9
+
+eval:
+  frequency: 10
+
+hydra:
+  run:
+    dir: .  
+  output_subdir: null

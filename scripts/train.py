@@ -14,7 +14,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from envs import make_env as _make_env_dispatch
 from algos import build_algorithm
-from shared import ResultsDB, extract_avg_policy, evaluate_policy
+from shared import ResultsDB, extract_avg_policy, evaluate_policy, DoneTransform
 from envs.matrix_games import compute_nash_conv, MinMaxRewardTransform
 
 def _resolve_cfg(cfg: DictConfig):
@@ -73,6 +73,12 @@ def train(cfg: DictConfig):
     algo = build_algorithm(algo_name, env, cfg)
 
     #──── data pipeline ────────────────────────────────────────────
+    postproc = None
+    if cfg.env_type == "vmas":
+        postproc = DoneTransform(
+            reward_key=env.reward_key,
+            done_keys=env.done_keys,
+        )
     collector = Collector(
         env,
         algo.policy,
@@ -80,6 +86,7 @@ def train(cfg: DictConfig):
         storing_device=cfg.train.device,
         frames_per_batch=cfg.collector.frames_per_batch,
         total_frames=cfg.collector.total_frames,
+        postproc=postproc,
     )
 
     #──── main loop ────────────────────────────────────────────────
@@ -118,9 +125,8 @@ def train(cfg: DictConfig):
             "reward/mean_episode_reward": mean_episode_reward,
             "time/update": t_update_end - t_update_start,
             **loss_metrics,
-            **env.get_extra_metrics(),
+            **(env.get_extra_metrics() if hasattr(env, "get_extra_metrics") else {}),
         }
-
         if cfg.env_type == "matrix_games":
             nash = compute_nash_conv(
                 env,

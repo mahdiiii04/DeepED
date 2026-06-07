@@ -1,0 +1,48 @@
+seed: 0
+experiment_name: Balace
+env_type: vmas
+algo_name: qmix
+policy_type: qnet
+sub_exp: ${env.scenario_name}/${algo_name}
+
+env:
+  scenario_name: balace
+  num_envs: null          
+  max_steps: 100
+  device: null            
+
+model:
+  shared_params: False
+  depth: 2
+  num_cells: 256
+
+collector:
+  frames_per_batch: 60_000
+  n_iters: 500
+  total_frames: null      
+
+buffer:
+  memory_size: null      
+
+train:
+  num_epochs: 30
+  minibatch_size: 4096
+  lr: 1e-3
+  max_grad_norm: 40.0
+  device: null            
+
+loss:
+  gamma: 0.99
+  tau: 0.005          
+  eps_init: 0.3        
+  eps_end: 0.01        
+  eps_anneal_frac: 0.5
+  mixer_type: qmix
+
+eval:
+  frequency: 10
+
+hydra:
+  run:
+    dir: .  
+  output_subdir: null

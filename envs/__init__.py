@@ -25,5 +25,15 @@ def make_env(
             goal_phase_length=cfg.env.get("goal_phase_length", 550),
             seed=seed,
         )
+    elif env_type == "vmas":
+        from torchrl.envs.libs.vmas import VmasEnv
+        return VmasEnv(
+            scenario=cfg.env.scenario_name,
+            num_envs=cfg.env.num_envs,
+            continuous_actions=False,
+            max_steps=cfg.env.max_steps,
+            device=cfg.env.device,
+            seed=seed,
+        )
     else:
         raise NotImplementedError("Not yet")

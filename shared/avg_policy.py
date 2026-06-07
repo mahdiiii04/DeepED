@@ -50,21 +50,21 @@ def extract_avg_policy(
         device = env.device
 
     n_agents = env.n_agents
-    n_actions = env.n_actions
 
     td, num_episodes, max_steps = _rollout(env, policy)
     input_td = _flat_obs(td, n_agents, device)
 
     if policy_type == "actor":
         dist  = policy.get_dist(input_td)
-        probs = dist.probs                                 
+        probs = dist.probs
     elif policy_type == "qnet":
         out_td      = policy(input_td)
         action_vals = out_td.get(("agents", "action_value"))
         probs       = torch.softmax(action_vals / temperature, dim=-1)
     else:
         raise ValueError(f"Unknown policy_type '{policy_type}'. Use 'actor' or 'qnet'.")
-    
+
+    n_actions = probs.shape[-1]
     probs = probs.reshape(num_episodes, max_steps, n_agents, n_actions)
     avg_pi = probs.mean(dim=(0, 1))
 
