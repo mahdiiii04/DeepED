@@ -33,6 +33,7 @@ def make_env(
             continuous_actions=False,
             max_steps=cfg.env.max_steps,
             device=cfg.env.device,
+            n_agents=3,
             seed=seed,
         )
     else:
