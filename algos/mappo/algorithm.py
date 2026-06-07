@@ -63,7 +63,7 @@ class MAPPO:
             share_params=cfg.model.shared_params,
             device=device,
             depth=cfg.model.depth,
-            num_cells=128,
+            num_cells=cfg.model.num_cells,
             activation_class=nn.Tanh,
         )
 
@@ -79,7 +79,7 @@ class MAPPO:
             clip_epsilon=cfg.loss.clip_epsilon,
             entropy_coeff=cfg.loss.entropy_eps,
             normalize_advantage=False,
-            #separate_agent_loss=True,
+            separate_agent_loss=True,
         )
 
         self.loss_module.set_keys(
@@ -87,7 +87,7 @@ class MAPPO:
             action=env.action_key,
             done=("agents", "done"),
             terminated=("agents", "terminated"),
-            #sample_log_prob=("agents", "action_log_prob"),
+            sample_log_prob=("agents", "action_log_prob"),
         )
 
         self.loss_module.make_value_estimator(
