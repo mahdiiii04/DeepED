@@ -107,9 +107,18 @@ def train(cfg: DictConfig):
         total_frames += tensordict_data.numel()
         global_step = total_frames
 
-        done = tensordict_data.get(("agents", "done"))
-        final_rewards = tensordict_data.get(("agents", "episode_reward"))[done]
-        mean_episode_reward = final_rewards.mean().item()
+        if cfg.env_type in ("gridworld", "matrix_games"):
+            episode_r = (
+                tensordict_data
+                .get(("next", "agents", "episode_reward"))
+                .reshape(cfg.env.num_envs, cfg.env.max_steps, env.n_agents, 1)
+            )
+
+            mean_episode_reward = episode_r[:, -1].mean().item()
+        else:
+            done = tensordict_data.get(("agents", "done"))
+            final_rewards = tensordict_data.get(("agents", "episode_reward"))[done]
+            mean_episode_reward = final_rewards.mean().item()
 
         scalar_metrics = {
             "reward/mean_episode_reward": mean_episode_reward,
