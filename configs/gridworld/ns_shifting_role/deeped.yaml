@@ -9,7 +9,7 @@ env:
   num_envs: null
   max_steps: 100
   device: null
-  pref_phase_length: 1550
+  pref_phase_length: 1550     
   goal_phase_length: 550
 
 model:

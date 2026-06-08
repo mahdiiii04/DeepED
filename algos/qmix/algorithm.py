@@ -28,11 +28,16 @@ class QMIX:
         self.cfg = cfg
         device = cfg.train.device
 
-        #───── policy ─────────────────────────────────────────────
+        action_spec = env.full_action_spec_unbatched[env.action_key]
+        if hasattr(action_spec, "space") and hasattr(action_spec.space, "n"):
+            n_actions = action_spec.space.n      # Correct for Categorical
+        else:
+            n_actions = action_spec.shape[-1]
+            
         net = nn.Sequential(
             MultiAgentMLP(
                 n_agent_inputs=env.observation_spec["agents", "observation"].shape[-1],
-                n_agent_outputs=env.full_action_spec_unbatched[env.action_key].shape[-1],
+                n_agent_outputs=n_actions,
                 n_agents=env.n_agents,
                 centralized=False,
                 share_params=cfg.model.shared_params,
@@ -73,15 +78,17 @@ class QMIX:
                 device=device,
             ),
         )
+        obs_dim = env.observation_spec_unbatched["agents", "observation"].shape[-1]
+        
         if cfg.loss.mixer_type == "qmix":
             self.mixer = TensorDictModule(
                 module=QMixer(
-                    state_shape=env.observation_spec_unbatched["agents", "observation"].shape,
+                    state_shape=(obs_dim,),          # global state dim
                     mixing_embed_dim=32,
                     n_agents=env.n_agents,
                     device=cfg.train.device,
                 ),
-                in_keys=[("agents", "chosen_action_value"), ("agents", "observation")],
+                in_keys=[("agents", "chosen_action_value"), "state"],
                 out_keys=["chosen_action_value"],
             )
         elif cfg.loss.mixer_type == "vdn":
@@ -124,38 +131,32 @@ class QMIX:
 
     #───── public interfaces ───────────────────────────────────
 
-    def after_collect(
-        self,
-        tensordict_data
-    ):
-        # Store original per-agent episode reward for logging in train.py
-        # (we keep it instead of deleting)
+    def after_collect(self, tensordict_data):
+        # Store original per-agent episode reward
         if ("next", "agents", "episode_reward") in tensordict_data.keys(True):
             per_agent_episode_reward = tensordict_data.get(("next", "agents", "episode_reward")).clone()
         else:
             per_agent_episode_reward = None
 
-        # Global reward (for QMIX loss)
+        # Global reward
         tensordict_data.set(
             ("next", "reward"),
             tensordict_data.get(("next", self.env.reward_key)).mean(-2),
         )
-        del tensordict_data["next", self.env.reward_key]
+        if ("next", self.env.reward_key) in tensordict_data.keys(True):
+            del tensordict_data["next", self.env.reward_key]
 
-        # Global episode reward (for QMIX loss)
+        # Global episode reward
         tensordict_data.set(
             ("next", "episode_reward"),
             tensordict_data.get(("next", "agents", "episode_reward")).mean(-2),
         )
 
-        # IMPORTANT: Restore per-agent episode_reward so train.py doesn't break
+        # Restore per-agent reward
         if per_agent_episode_reward is not None:
-            tensordict_data.set(
-                ("next", "agents", "episode_reward"),
-                per_agent_episode_reward
-            )
+            tensordict_data.set(("next", "agents", "episode_reward"), per_agent_episode_reward)
 
-        # Flatten done/terminated to top-level so they match reward's shape
+        # Flatten done/terminated
         tensordict_data.set(
             ("next", "done"),
             tensordict_data.get(("next", "agents", "done")).any(-2),
@@ -164,6 +165,16 @@ class QMIX:
             ("next", "terminated"),
             tensordict_data.get(("next", "agents", "terminated")).any(-2),
         )
+
+        # === ADD GLOBAL STATE FOR QMIX ===
+        obs = tensordict_data.get(("agents", "observation"))
+        global_state = obs.mean(dim=-2)          # [B, obs_dim]
+        tensordict_data.set("state", global_state)
+
+        # Also add to 'next' for target computation
+        next_obs = tensordict_data.get(("next", "agents", "observation"))
+        next_global_state = next_obs.mean(dim=-2)
+        tensordict_data.set(("next", "state"), next_global_state)
 
         self.current_frames = tensordict_data.numel()
 
