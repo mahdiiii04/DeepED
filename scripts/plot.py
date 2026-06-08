@@ -49,7 +49,22 @@ _M = lambda key, fname, ylabel, title, hline=None, hlabel="": \
     dict(key=key, fname=fname, ylabel=ylabel, title=title,
          hline=hline, hlabel=hlabel)
 
+# Template reused for every VMAS scenario — only reward matters.
+_VMAS_ENTRY = dict(
+    family="vmas",
+    phase_metric=None,
+    metrics=[
+        _M("reward/mean_episode_reward", "reward.pdf",
+           "Mean Episode Reward",        "Episode Reward"),
+    ],
+    simplex=False,
+)
+
 SCENARIO_CATALOGUE: dict[str, dict] = {
+    # ── vmas (generic alias) ────────────────────────────────────────────────────────────
+    # Pass --scenario vmas for any VMAS task regardless of the actual
+    # scenario name stored in the DB (simple_spread, navigation, etc.)
+    "vmas": _VMAS_ENTRY,
     # ── matrix games ────────────────────────────────────────────────────────
     "biased_rps": dict(
         family="matrix_games",
@@ -224,9 +239,15 @@ def load_runs_by_algo(
     seeds: list[int] | None = None,
 ) -> dict[str, dict[int, int]]:
     result: dict[str, dict[int, int]] = {}
+    # "vmas" is a generic alias — don't filter by scenario name so it matches
+    # whatever task name (simple_spread, navigation, …) is stored in the DB.
+    use_scenario_filter = scenario != "vmas"
     for algo in algos:
-        conditions = ["scenario=?", "algo_name=?"]
-        params: list = [scenario, algo]
+        conditions = ["algo_name=?"]
+        params: list = [algo]
+        if use_scenario_filter:
+            conditions.insert(0, "scenario=?")
+            params.insert(0, scenario)
         if seeds:
             placeholders = ",".join("?" * len(seeds))
             conditions.append(f"seed IN ({placeholders})")
@@ -836,12 +857,23 @@ def main():
     conn     = _connect(args.db)
 
     # ── resolve scenario catalogue entry ────────────────────────────────────
-    if scenario not in SCENARIO_CATALOGUE:
-        known = ", ".join(SCENARIO_CATALOGUE)
-        raise ValueError(
-            f"Unknown scenario '{scenario}'.\nKnown scenarios: {known}"
-        )
-    cat          = SCENARIO_CATALOGUE[scenario]
+    if scenario in SCENARIO_CATALOGUE:
+        cat = SCENARIO_CATALOGUE[scenario]
+    else:
+        # Auto-detect VMAS: check the env_type stored in the DB.
+        row = conn.execute(
+            "SELECT env_type FROM runs WHERE scenario=? LIMIT 1", (scenario,)
+        ).fetchone()
+        if row and row[0] == "vmas":
+            cat = _VMAS_ENTRY
+            print(f"  ℹ  '{scenario}' not in catalogue — treating as vmas (reward only).")
+        else:
+            known = ", ".join(SCENARIO_CATALOGUE)
+            raise ValueError(
+                f"Unknown scenario '{scenario}'.\n"
+                f"Known scenarios: {known}\n"
+                f"For VMAS scenarios the env_type must be 'vmas' in the DB."
+            )
     phase_metric = cat["phase_metric"]   # str | None
 
     # ── resolve algos ────────────────────────────────────────────────────────
@@ -869,14 +901,6 @@ def main():
 
     # ── per-metric scalar plots (catalogue-driven) ───────────────────────────
     for m in cat["metrics"]:
-        # Check at least one algo has this metric before spending time on it
-        all_run_ids: dict[int, int] = {}
-        for run_ids in runs_by_algo.values():
-            all_run_ids.update(run_ids)
-        if not metric_exists(conn, all_run_ids, m["key"]):
-            print(f"  ⚠  Metric '{m['key']}' not in DB — skipping.")
-            continue
-
         plot_scalar_metric(
             conn, runs_by_algo,
             metric_key   = m["key"],
@@ -907,6 +931,8 @@ def main():
             conn, runs_by_algo, scenario, out_dir,
             n_points=args.n_points, phase_metric=phase_metric,
         )
+
+    # vmas: only the reward scalar plot above — nothing extra needed.
 
     conn.close()
     print("\n[plot] Done.")

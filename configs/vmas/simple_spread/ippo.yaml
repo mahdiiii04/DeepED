@@ -34,7 +34,7 @@ train:
 loss:
   clip_epsilon: 0.2
   entropy_eps: 0.01
-  gamma: 0.9
+  gamma: 0.99
   lmbda: 0.9
 
 eval:

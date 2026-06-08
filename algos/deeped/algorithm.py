@@ -74,13 +74,14 @@ class DeepED:
         )
 
         #───── loss ───────────────────────────────────────────
-
+        dynamics = cfg.loss.get("dynamics", "smith")
         self.loss_module = DeepEDLoss(
             actor_network=self.policy,
             critic_network=self.critic,
             entropy_coeff=cfg.loss.entropy_eps,
             alpha=cfg.loss.alpha,
             gamma=cfg.loss.gamma,
+            dynamics=dynamics,
         )
 
         self.loss_module.set_keys(

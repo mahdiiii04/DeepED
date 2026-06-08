@@ -8,7 +8,7 @@ def build_algorithm(
     if algo_name in ("mappo", "ippo"):
         from algos.mappo.algorithm import MAPPO
         return MAPPO(env, cfg)
-    elif algo_name == "deep_ed":
+    elif algo_name in ("deep_ed", "deep_ed_bnn", "deep_ed_replicator"):
         from algos.deeped.algorithm import DeepED
         return DeepED(env, cfg)
     elif algo_name == "maddpg":

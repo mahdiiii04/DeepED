@@ -70,6 +70,7 @@ class DeepEDLoss(LossModule):
             functional: bool = True,
             # ── new: average-actor EMA rate ──────────────────────────────────
             avg_actor_tau: float = 0.02,
+            dynamics: str = "smith",
     ):
         self._functional = functional
         super().__init__()
@@ -84,6 +85,8 @@ class DeepEDLoss(LossModule):
             self.critic_network = critic_network
             self.target_critic_network_params = None
             self.avg_actor_network_params = None
+        
+        self.dynamics = dynamics
 
         self.avg_actor_tau = avg_actor_tau
 
@@ -294,30 +297,95 @@ class DeepEDLoss(LossModule):
 
         return pi_prime
     
+        
     def _policy_update_bnn(self, pi: torch.Tensor, q: torch.Tensor) -> torch.Tensor:
-        q_bar = (pi * q).sum(dim=-1, keepdim=True)   # (batch, n_agents, 1)
+        """Brown-von Neumann-Nash (BNN) policy update.
 
-        # ── Excess fitness of every action over the mean ──────────────────────────
-        excess = q - q_bar                            # (batch, n_agents, n_actions)
+        BNN mean dynamic (same inflow/outflow structure as Smith and Replicator):
 
-        # ── Inflow term: [F_i − F̄]₊ ─────────────────────────────────────────────
-        inflow = excess.clamp(min=0.0)               # (batch, n_agents, n_actions)
+            π'_i = π_i + α · ( [F_i(π) - F̄(π)]₊  −  π_i · Σ_j [F_j(π) - F̄(π)]₊ )
 
-        # ── Outflow term: x_i · Σ_j [F_j − F̄]₊ ─────────────────────────────────
-        # total_inflow = Σ_j [F_j − F̄]₊  — scalar per (batch, agent)
-        total_excess = inflow.sum(dim=-1, keepdim=True)  # (batch, n_agents, 1)
-        outflow = pi * total_excess                       # (batch, n_agents, n_actions)
+        where:
+            F_i(π) = Σ_j π_j · [Q_i - Q_j]₊   (average pairwise advantage of action i)
+            F̄(π)  = Σ_i π_i · F_i(π)           (mean fitness under π)
 
-        # ── Euler step in simplex tangent space ──────────────────────────────────
-        pi_dot   = inflow - outflow                  # mass-conserving by construction
-        pi_prime = pi + self.alpha * pi_dot
+        The inflow  [F_i - F̄]₊  grows actions whose excess fitness is positive;
+        the outflow  π_i · Σ_j [F_j - F̄]₊  drains mass from i proportionally
+        to its current weight — preserving the simplex exactly as Smith does.
 
-        # ── Project back onto simplex (handles small numerical drift) ─────────────
-        pi_prime = pi_prime.clamp(min=0.0)
+        Args:
+            pi: Current policy probabilities  (batch, n_agents, n_actions).
+            q:  Q-values                       (batch, n_agents, n_actions).
+
+        Returns:
+            pi_prime: Updated policy on the probability simplex,
+                      same shape as pi.
+        """
+        # F_i = Σ_j π_j · [Q_i - Q_j]₊
+        q_i = q.unsqueeze(-1)                              # (..., n_actions, 1)
+        q_j = q.unsqueeze(-2)                              # (..., 1, n_actions)
+        adv_i_over_j = torch.clamp(q_i - q_j, min=0.0)    # (..., n_actions, n_actions)
+        F = torch.einsum("...j,...ij->...i", pi, adv_i_over_j)  # (..., n_actions)
+
+        # F̄(π) = Σ_i π_i · F_i
+        F_bar = (pi * F).sum(dim=-1, keepdim=True)         # (..., 1)
+
+        # Excess fitness: [F_i - F̄]₊
+        excess = torch.clamp(F - F_bar, min=0.0)           # (..., n_actions)
+
+        # Total excess (scalar): Σ_j [F_j - F̄]₊
+        total_excess = excess.sum(dim=-1, keepdim=True)    # (..., 1)
+
+        # BNN mean dynamic: inflow - outflow
+        pi_prime = pi + self.alpha * (excess - pi * total_excess)
+
+        # Clamp and renormalise (guards numerical drift for large α)
+        pi_prime = torch.clamp(pi_prime, min=0.0)
         pi_prime = pi_prime / pi_prime.sum(dim=-1, keepdim=True).clamp(min=1e-8)
 
         return pi_prime
-        
+
+    def _policy_update_replicator(self, pi: torch.Tensor, q: torch.Tensor) -> torch.Tensor:
+        """Replicator dynamics policy update.
+
+        Discrete-time replicator equation:
+            π'_i  =  π_i · (1 + α · (Q_i - V(π))) / Z
+
+        where  V(π) = Σ_i π_i · Q_i  is the expected value under π, and
+        Z normalises the result back onto the simplex.
+
+        Replicator dynamics is the canonical baseline in evolutionary game
+        theory: strategies that earn above-average fitness grow, those below
+        shrink, and strategies already at zero stay there (no mutation term).
+        The multiplicative structure keeps π strictly on the interior of the
+        simplex as long as the initial policy is interior and α is small.
+
+        Note:  unlike Smith and BNN, replicator dynamics is *not* a valid
+        Lyapunov revision protocol in all games, but it converges to Nash in
+        zero-sum and potential games and is useful as a diagnostic comparison.
+
+        Args:
+            pi:    Current policy probabilities  (batch, n_agents, n_actions).
+            q:     Q-values                       (batch, n_agents, n_actions).
+
+        Returns:
+            pi_prime: Updated policy on the probability simplex,
+                      same shape as pi.
+        """
+        # Expected value V(π) = Σ_i π_i Q_i
+        v_pi = (pi * q).sum(dim=-1, keepdim=True)      # (..., 1)
+
+        # Unnormalised replicator step
+        pi_prime = pi * (1.0 + self.alpha * (q - v_pi))
+
+        # Clamp to ensure non-negativity (can go negative for large α)
+        pi_prime = torch.clamp(pi_prime, min=0.0)
+
+        # Renormalise onto the simplex
+        pi_prime = pi_prime / pi_prime.sum(dim=-1, keepdim=True).clamp(min=1e-8)
+
+        return pi_prime
+
     def _kl_divergence(self, pi_prime: torch.Tensor, pi: torch.Tensor) -> torch.Tensor:
         eps = 1e-8
         pi       = torch.clamp(pi,       min=eps)
@@ -337,8 +405,12 @@ class DeepEDLoss(LossModule):
         q_vals = self._get_q_values(tensordict)
 
         with torch.no_grad():
-            pi_prime = self._policy_update(pi, q_vals)
-            #pi_prime = self._policy_update_bnn(pi, q_vals)
+            if self.dynamics == "smith":
+                pi_prime = self._policy_update(pi, q_vals)
+            elif self.dynamics == "bnn":
+                pi_prime = self._policy_update_bnn(pi, q_vals)
+            elif self.dynamics == "replicator":
+                pi_prime = self._policy_update_replicator(pi, q_vals)
 
         loss_kl = self._kl_divergence(pi_prime, pi)
         td_out  = TensorDict({"loss_objective": loss_kl}, batch_size=[])
