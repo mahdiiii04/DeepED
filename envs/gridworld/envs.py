@@ -1385,8 +1385,6 @@ def GridWorldFactory(
         )
     cls = _REGISTRY[scenario]
 
-    # inspect.signature(cls) returns (*args, **kwargs) for TorchRL
-    # subclasses due to metaclass wrapping — use __init__ directly.
     valid_params = inspect.signature(cls.__init__).parameters
     filtered = {k: v for k, v in kwargs.items() if k in valid_params}
 

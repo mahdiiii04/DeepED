@@ -1,16 +1,15 @@
 seed: 0
-experiment_name: NSRoleShifting                               
+experiment_name: Foraging
 env_type: gridworld
 algo_name: deep_ed
 sub_exp: ${env.scenario_name}/${algo_name}
 
 env:
-  scenario_name: ns_role_nav
+  scenario_name: ns_competitive_foraging
   num_envs: null
   max_steps: 100
   device: null
-  pref_phase_length: 1550     
-  goal_phase_length: 550
+  pref_phase_length: 550
 
 model:
   shared_params: False
