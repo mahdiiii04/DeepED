@@ -1,12 +1,12 @@
 seed: 0
-experiment_name: Balace
+experiment_name: Balance  
 env_type: vmas
 algo_name: qmix
 policy_type: qnet
 sub_exp: ${env.scenario_name}/${algo_name}
 
 env:
-  scenario_name: balace
+  scenario_name: balance
   num_envs: null          
   max_steps: 100
   device: null            
