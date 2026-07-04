@@ -20,7 +20,6 @@ class MatrixGameEnv(EnvBase):
     where ``payoff[i, a0, a1]`` is the reward for agent ``i`` when
     the joint action is ``(a0, a1)``.
     """
-
     n_agents: int = 2
     n_actions: int = 2
 
@@ -377,7 +376,6 @@ class BiasedRPSEnv(MatrixGameEnv):
     
     def _reset(self, tensordict=None):
         td = super()._reset(tensordict)
-         # expose current phase (same for all envs) + flag (always False on reset)
         td.set("phase", self._current_phase.clone())
         td.set(
             "phase_changed",

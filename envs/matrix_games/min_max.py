@@ -3,13 +3,9 @@ from tensordict import TensorDictBase
 import torch
 
 class MinMaxRewardTransform(Transform):
-    """Simple per-batch min-max scaling:
-    scaled_reward = (reward - r_min) / (r_max - r_min + 1e-8)
-    """
-
     def __init__(self, epsilon: float = 1e-8, clip_range: float = 10.0):
         super().__init__(
-            in_keys=[("agents", "reward")],   # ✅ correct nested key
+            in_keys=[("agents", "reward")],  
             out_keys=[("agents", "reward")],
         )
         self.epsilon = epsilon

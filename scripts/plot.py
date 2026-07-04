@@ -12,18 +12,34 @@ import matplotlib.colors as mcolors
 from matplotlib.lines import Line2D
 
 matplotlib.rcParams.update({
-    "font.family":       "DejaVu Sans",
-    "font.size":         11,
-    "axes.titlesize":    13,
-    "axes.labelsize":    12,
-    "legend.fontsize":   10,
-    "xtick.labelsize":   10,
-    "ytick.labelsize":   10,
-    "axes.spines.top":   False,
-    "axes.spines.right": False,
-    "figure.dpi":        150,
-    "savefig.bbox":      "tight",
-    "savefig.dpi":       300,
+    "font.family":            "DejaVu Sans",
+    "font.size":              12,
+    "axes.titlesize":         14,
+    "axes.titleweight":       "bold",
+    "axes.labelsize":         12,
+    "axes.labelweight":       "bold",
+    "legend.fontsize":        10,
+    "legend.framealpha":      0.85,
+    "legend.edgecolor":       "0.8",
+    "xtick.labelsize":        10,
+    "ytick.labelsize":        10,
+    "xtick.direction":        "in",
+    "ytick.direction":        "in",
+    "xtick.major.size":       4,
+    "ytick.major.size":       4,
+    "axes.spines.top":        False,
+    "axes.spines.right":      False,
+    "axes.grid":              True,
+    "grid.alpha":             0.3,
+    "grid.linewidth":         0.6,
+    "grid.linestyle":         "--",
+    "figure.dpi":             150,
+    "figure.constrained_layout.use": False,   
+    "savefig.bbox":           "tight",
+    "savefig.dpi":            300,
+    "savefig.pad_inches":     0.05,
+    "lines.linewidth":        2.2,
+    "patch.linewidth":        0.5,
 })
 
 PALETTE = [
@@ -35,21 +51,11 @@ PALETTE = [
     "#E69F00",  # amber
 ]
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Scenario catalogue
-#
-# "family"   : which env codebase produced the run
-# "metrics"  : list of (metric_key, filename, ylabel, title_suffix, hline, hline_label)
-#              Only metrics that actually exist in the DB will be plotted;
-#              missing ones are silently skipped.
-# "phase_metric": DB key used to detect phase changes (None = no phases)
-# ─────────────────────────────────────────────────────────────────────────────
 
 _M = lambda key, fname, ylabel, title, hline=None, hlabel="": \
     dict(key=key, fname=fname, ylabel=ylabel, title=title,
          hline=hline, hlabel=hlabel)
 
-# Template reused for every VMAS scenario — only reward matters.
 _VMAS_ENTRY = dict(
     family="vmas",
     phase_metric=None,
@@ -62,8 +68,6 @@ _VMAS_ENTRY = dict(
 
 SCENARIO_CATALOGUE: dict[str, dict] = {
     # ── vmas (generic alias) ────────────────────────────────────────────────────────────
-    # Pass --scenario vmas for any VMAS task regardless of the actual
-    # scenario name stored in the DB (simple_spread, navigation, etc.)
     "vmas": _VMAS_ENTRY,
     # ── matrix games ────────────────────────────────────────────────────────
     "biased_rps": dict(
@@ -73,10 +77,9 @@ SCENARIO_CATALOGUE: dict[str, dict] = {
             _M("nash/nash_conv",            "nash_conv.pdf",
                "Nash Convergence",          "Nash Convergence",
                hline=0.0, hlabel="Nash equilibrium"),
-            _M("reward/mean_episode_reward","reward.pdf",
-               "Mean Episode Reward",       "Episode Reward"),
         ],
         simplex=True,
+        policy_probs=False,
     ),
     "stag_hunt": dict(
         family="matrix_games",
@@ -89,6 +92,7 @@ SCENARIO_CATALOGUE: dict[str, dict] = {
                "Mean Episode Reward",       "Episode Reward"),
         ],
         simplex=True,
+        policy_probs=True,
     ),
     "battle_of_sexes": dict(
         family="matrix_games",
@@ -97,10 +101,9 @@ SCENARIO_CATALOGUE: dict[str, dict] = {
             _M("nash/nash_conv",            "nash_conv.pdf",
                "Nash Convergence",          "Nash Convergence",
                hline=0.0, hlabel="Nash equilibrium"),
-            _M("reward/mean_episode_reward","reward.pdf",
-               "Mean Episode Reward",       "Episode Reward"),
         ],
-        simplex=True,
+        simplex=False,
+        policy_probs=False,
     ),
     # ── gridworld ───────────────────────────────────────────────────────────
     "cooperative_nav": dict(
@@ -152,18 +155,11 @@ SCENARIO_CATALOGUE: dict[str, dict] = {
     ),
     "role_nav": dict(
         family="gridworld",
-        phase_metric=None,
+        phase_metric="current_phase",
+        display_name="NSRoleShifting",
         metrics=[
             _M("reward/mean_episode_reward","reward.pdf",
                "Mean Episode Reward",       "Episode Reward"),
-            _M("success_rate",              "success_rate.pdf",
-               "Success Rate",              "Coordination Success Rate",
-               hline=1.0, hlabel="Perfect"),
-            _M("phase_correct_rate",        "phase_correct_rate.pdf",
-               "Phase-Correct Rate",        "Meeting at Preferred Goal",
-               hline=1.0, hlabel="Perfect"),
-            _M("phase_stale_rate",          "phase_stale_rate.pdf",
-               "Phase-Stale Rate",          "Meeting at Stale Goal (bad)"),
             _M("phase_change_reward_gap",   "recovery_gap.pdf",
                "Recovery Gap",              "Post-Phase-Change Recovery Gap",
                hline=0.0, hlabel="No gap"),
@@ -172,22 +168,11 @@ SCENARIO_CATALOGUE: dict[str, dict] = {
     ),
     "ns_role_nav": dict(
         family="gridworld",
-        phase_metric=None,
+        phase_metric="current_phase",
+        display_name="NSRoleShifting",
         metrics=[
             _M("reward/mean_episode_reward","reward.pdf",
                "Mean Episode Reward",       "Episode Reward"),
-            _M("success_rate",              "success_rate.pdf",
-               "Success Rate",              "Coordination Success Rate",
-               hline=1.0, hlabel="Perfect"),
-            _M("all_on_goal_0_rate",        "goal0_rate.pdf",
-               "All-on-Goal 0 Rate",        "Goal 0 Coordination"),
-            _M("all_on_goal_1_rate",        "goal1_rate.pdf",
-               "All-on-Goal 1 Rate",        "Goal 1 Coordination"),
-            _M("phase_correct_rate",        "phase_correct_rate.pdf",
-               "Phase-Correct Rate",        "Meeting at Preferred Goal",
-               hline=1.0, hlabel="Perfect"),
-            _M("phase_stale_rate",          "phase_stale_rate.pdf",
-               "Phase-Stale Rate",          "Meeting at Stale Goal (bad)"),
             _M("phase_change_reward_gap",   "recovery_gap.pdf",
                "Recovery Gap",              "Post-Phase-Change Recovery Gap",
                hline=0.0, hlabel="No gap"),
@@ -196,9 +181,33 @@ SCENARIO_CATALOGUE: dict[str, dict] = {
     ),
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Matrix-game extras
-# ─────────────────────────────────────────────────────────────────────────────
+
+# Words that should always appear fully uppercased in titles
+_ACRONYMS = {"rps", "ns", "vmas", "marl"}
+
+def _title_word(word: str) -> str:
+    """Capitalise a single word, but keep known acronyms fully upper-cased."""
+    if word.lower() in _ACRONYMS:
+        return word.upper()
+    return word.capitalize()
+
+
+def scenario_title(scenario: str, display_name: str | None = None) -> str:
+    """
+    Convert a snake_case scenario name to a human-readable title.
+    If the catalogue entry has a `display_name`, that is used verbatim instead.
+
+    Examples
+    --------
+    biased_rps      → Biased RPS
+    stag_hunt       → Stag Hunt
+    ns_cooperative_nav → NS Cooperative Nav
+    role_nav        → NSRoleShifting  (via display_name)
+    """
+    if display_name:
+        return display_name
+    return " ".join(_title_word(w) for w in scenario.split("_"))
+
 
 GAME_ACTION_LABELS: dict[str, list[str]] = {
     "biased_rps":      ["Rock", "Paper", "Scissors"],
@@ -207,17 +216,11 @@ GAME_ACTION_LABELS: dict[str, list[str]] = {
 }
 
 NASH_EQUILIBRIA: dict[str, list[tuple[list[float], list[float]]]] = {
-    # biased_rps omitted: NE = (v/(v+2), 1/(v+2), 1/(v+2)) depends on
-    # the bias parameter v which changes across phases.
     "stag_hunt":       [([1.0, 0.0], [1.0, 0.0]),
                         ([0.0, 1.0], [0.0, 1.0])],
     "battle_of_sexes": [([1.0, 0.0], [1.0, 0.0]),
                         ([0.0, 1.0], [0.0, 1.0])],
 }
-
-# ─────────────────────────────────────────────────────────────────────────────
-# DB helpers
-# ─────────────────────────────────────────────────────────────────────────────
 
 def _connect(db_path: str) -> sqlite3.Connection:
     if not Path(db_path).exists():
@@ -239,8 +242,6 @@ def load_runs_by_algo(
     seeds: list[int] | None = None,
 ) -> dict[str, dict[int, int]]:
     result: dict[str, dict[int, int]] = {}
-    # "vmas" is a generic alias — don't filter by scenario name so it matches
-    # whatever task name (simple_spread, navigation, …) is stored in the DB.
     use_scenario_filter = scenario != "vmas"
     for algo in algos:
         conditions = ["algo_name=?"]
@@ -259,7 +260,7 @@ def load_runs_by_algo(
         if rows:
             result[algo] = {seed: run_id for seed, run_id in rows}
         else:
-            print(f"  ⚠  No runs found for algo='{algo}' — skipping.")
+            print(f"No runs found for algo='{algo}' — skipping.")
     if not result:
         available = [r[0] for r in conn.execute(
             "SELECT DISTINCT scenario FROM runs").fetchall()]
@@ -321,9 +322,6 @@ def load_policy_snapshots(
         probs[step_to_idx[step], ag] = json.loads(probs_json)
     return np.array(steps_set, dtype=float), probs
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Interpolation
-# ─────────────────────────────────────────────────────────────────────────────
 
 def interpolate_to_grid(
     steps: np.ndarray, values: np.ndarray, grid: np.ndarray
@@ -349,11 +347,7 @@ def build_common_grid(
     combined = np.concatenate(all_steps)
     return np.linspace(combined.min(), combined.max(), n_points)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Generic plotting helpers
-# ─────────────────────────────────────────────────────────────────────────────
-
-def shade(ax, x, mean, std, color, label, alpha=0.18, lw=2.0):
+def shade(ax, x, mean, std, color, label, alpha=0.15, lw=2.2):
     ax.plot(x, mean, color=color, linewidth=lw, label=label)
     ax.fill_between(x, mean - std, mean + std, color=color, alpha=alpha, linewidth=0)
 
@@ -397,17 +391,15 @@ def savefig(fig: plt.Figure, out_dir: str, filename: str):
     print(f"  Saved → {path}")
     plt.close(fig)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Scalar metric plot  (shared by both env families)
-# ─────────────────────────────────────────────────────────────────────────────
-
 def plot_scalar_metric(
     conn, runs_by_algo, metric_key, scenario,
     out_dir, filename, ylabel, title,
     hline=None, hline_label="", n_points=200,
     phase_metric: str | None = None,
+    display_name: str | None = None,
+    show_title: bool = True,
 ):
-    fig, ax = plt.subplots(figsize=(6, 4))
+    fig, ax = plt.subplots(figsize=(7, 4.5))
     any_data = False
     all_run_ids: dict[int, int] = {}
     for run_ids in runs_by_algo.values():
@@ -417,7 +409,7 @@ def plot_scalar_metric(
         color = PALETTE[idx % len(PALETTE)]
         grid  = build_common_grid(conn, run_ids, metric_key, n_points)
         if len(grid) == 0:
-            print(f"  ⚠  No data for '{metric_key}' / algo='{algo}' — skipping.")
+            print(f" No data for '{metric_key}' / algo='{algo}' — skipping.")
             continue
         interp = np.stack([
             interpolate_to_grid(*load_metric(conn, rid, metric_key), grid)
@@ -428,7 +420,7 @@ def plot_scalar_metric(
         any_data = True
 
     if not any_data:
-        print(f"  ⚠  No data for '{metric_key}' — skipping.")
+        print(f"No data for '{metric_key}' — skipping.")
         plt.close(fig)
         return
 
@@ -438,22 +430,19 @@ def plot_scalar_metric(
     if phase_metric:
         draw_phase_lines(ax, conn, all_run_ids, phase_metric)
 
-    title_prefix = scenario.replace("_", " ").title()
     ax.set_xlabel("Environment Steps")
     ax.set_ylabel(ylabel)
-    ax.set_title(f"{title} — {title_prefix}")
+    if show_title:
+        ax.set_title(f"{title} — {scenario_title(scenario, display_name)}")
     ax.xaxis.set_major_formatter(mticker.FuncFormatter(fmt_steps))
     ax.legend()
     fig.tight_layout()
     savefig(fig, out_dir, filename)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Matrix-games: policy probability plot
-# ─────────────────────────────────────────────────────────────────────────────
-
 def plot_policy_probs(
     conn, runs_by_algo, scenario, out_dir, n_points=200,
     phase_metric: str | None = None,
+    show_title: bool = True,
 ):
     LINESTYLES = ["-", "--", "-.", ":"]
     n_agents = n_actions = None
@@ -467,13 +456,13 @@ def plot_policy_probs(
             break
 
     if n_agents is None:
-        print("  ⚠  No policy snapshots — skipping policy_probs plot.")
+        print("No policy snapshots — skipping policy_probs plot.")
         return
 
     action_labels = GAME_ACTION_LABELS.get(
         scenario, [f"Action {a}" for a in range(n_actions)]
     )
-    fig, axes = plt.subplots(1, n_agents, figsize=(5 * n_agents, 4), sharey=True)
+    fig, axes = plt.subplots(1, n_agents, figsize=(5.5 * n_agents, 4.5), sharey=True)
     if n_agents == 1:
         axes = [axes]
 
@@ -527,22 +516,20 @@ def plot_policy_probs(
         ax.set_ylim(-0.05, 1.05)
         ax.set_xlabel("Environment Steps")
         ax.set_ylabel("Action Probability" if ag == 0 else "")
-        ax.set_title(f"Agent {ag}")
+        if show_title:
+            ax.set_title(f"Agent {ag}")
         ax.xaxis.set_major_formatter(mticker.FuncFormatter(fmt_steps))
         ax.legend(loc="upper right")
 
     n_seeds_str = ", ".join(f"{a}: {len(r)}" for a, r in runs_by_algo.items())
-    fig.suptitle(
-        f"Policy Probabilities — {scenario.replace('_', ' ').title()}"
-        f"  ({n_seeds_str} seeds)",
-        y=1.02,
-    )
+    if show_title:
+        fig.suptitle(
+            f"Policy Probabilities — {scenario_title(scenario)}"
+            f"  ({n_seeds_str} seeds)",
+            y=1.02,
+        )
     fig.tight_layout()
     savefig(fig, out_dir, "policy_probs.pdf")
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Matrix-games: simplex trajectory plot
-# ─────────────────────────────────────────────────────────────────────────────
 
 _TRI_VERTICES = np.array([
     [0.0,        0.0       ],
@@ -646,14 +633,131 @@ def _mark_nash_3action(ax, nash_list, agent_idx):
                    linewidths=2, zorder=7)
 
 
-def _mark_nash_2action(ax, nash_list, _agent_idx):
-    for ne in nash_list:
-        ax.scatter(ne[0][0], ne[1][0], s=120, marker="x", color="gray",
-                   linewidths=2, zorder=7)
+def _draw_phase_portrait_2action(
+    ax: plt.Axes,
+    fig: plt.Figure,
+    interp_all: np.ndarray,   # (n_seeds, T, n_agents, n_actions)
+    agent_idx: int,
+    action_labels: list[str],
+    nash_list: list,
+    color: str,
+    cmap_name: str,
+):
+    """
+    Phase portrait for one agent in a 2-action game.
 
+    x = P(action 0),  y = P(action 1)  for *this* agent.
+    Because P(action 0) + P(action 1) = 1 the trajectories lie on the
+    anti-diagonal, but the vector field is computed in the full unit square
+    so the gradient flow is visible everywhere (matching the style of a
+    standard replicator-dynamics phase portrait).
+
+    The empirical velocity at each trajectory point is binned onto a regular
+    grid via finite differences, giving an arrow field that shows which
+    direction this agent's policy tends to drift from any region.
+    """
+    n_seeds, T, _, _ = interp_all.shape
+    cmap = matplotlib.colormaps[cmap_name]
+
+    p0 = interp_all[:, :, agent_idx, 0]  
+    p1 = interp_all[:, :, agent_idx, 1]   
+    xy_seeds = np.stack([p0, p1], axis=-1) 
+
+    Q   = 12
+    eps = 1.0 / Q
+    gx  = np.linspace(eps / 2, 1 - eps / 2, Q)
+    gy  = np.linspace(eps / 2, 1 - eps / 2, Q)
+    GX, GY = np.meshgrid(gx, gy)
+    U   = np.zeros_like(GX)
+    V   = np.zeros_like(GY)
+    cnt = np.zeros_like(GX)
+
+    vel = np.diff(xy_seeds, axis=1)   
+    pos = xy_seeds[:, :-1, :]         
+
+    for s in range(n_seeds):
+        for t in range(T - 1):
+            xi, yi = pos[s, t]
+            ui, vi = vel[s, t]
+            ci = min(int(xi / eps), Q - 1)
+            ri = min(int(yi / eps), Q - 1)
+            U[ri, ci] += ui
+            V[ri, ci] += vi
+            cnt[ri, ci] += 1
+
+    mask = cnt > 0
+    U[mask] /= cnt[mask]
+    V[mask] /= cnt[mask]
+
+    mag = np.sqrt(U ** 2 + V ** 2)
+    mag_safe = np.where(mask, mag, 1.0)
+    U_norm = np.where(mask, U / mag_safe, 0.0)
+    V_norm = np.where(mask, V / mag_safe, 0.0)
+
+    arrow_len = eps * 0.55  
+    ax.quiver(
+        GX, GY, U_norm * arrow_len, V_norm * arrow_len,
+        mag,
+        cmap="Greys",
+        norm=mcolors.Normalize(0, mag[mask].max() if mask.any() else 1.0),
+        scale=1,
+        scale_units="xy",
+        angles="xy",
+        width=0.004,
+        headwidth=4,
+        headlength=5,
+        alpha=0.70,
+        zorder=2,
+    )
+
+    t_norm = np.linspace(0, 1, T)
+    for xy in xy_seeds:
+        ax.plot(xy[:, 0], xy[:, 1], color=color, alpha=0.18, lw=0.9, zorder=3)
+
+    mean_xy = xy_seeds.mean(axis=0)
+    for i in range(T - 1):
+        c = cmap(0.3 + 0.7 * t_norm[i])
+        ax.plot(mean_xy[i:i+2, 0], mean_xy[i:i+2, 1],
+                color=c, lw=2.4, zorder=4, solid_capstyle="round")
+
+    for idx in np.linspace(T // 10, T - T // 10, 6, dtype=int):
+        if idx + 1 >= T:
+            continue
+        dx = mean_xy[idx + 1, 0] - mean_xy[idx, 0]
+        dy = mean_xy[idx + 1, 1] - mean_xy[idx, 1]
+        if np.hypot(dx, dy) < 1e-6:
+            continue
+        c = cmap(0.3 + 0.7 * t_norm[idx])
+        ax.annotate("",
+            xy=(mean_xy[idx, 0] + dx, mean_xy[idx, 1] + dy),
+            xytext=(mean_xy[idx, 0], mean_xy[idx, 1]),
+            arrowprops=dict(arrowstyle="-|>", color=c, lw=1.6, mutation_scale=13),
+            zorder=5,
+        )
+
+    ax.scatter(*mean_xy[0],  s=80,  color=cmap(0.35), marker="o",
+               zorder=6, edgecolors="white", linewidths=1.0)
+    ax.scatter(*mean_xy[-1], s=140, color=cmap(0.95), marker="*",
+               zorder=6, edgecolors="white", linewidths=1.0)
+
+    for ne in nash_list:
+        p0_ne = float(ne[agent_idx][0])
+        p1_ne = 1.0 - p0_ne
+        ax.scatter(p0_ne, p1_ne, s=150, marker="x", color="black",
+                   linewidths=2.2, zorder=7)
+
+    ax.set_xlim(-0.03, 1.03)
+    ax.set_ylim(-0.03, 1.03)
+    ax.set_aspect("equal")
+    ax.set_xlabel(f"P({action_labels[0]})", fontsize=11)
+    ax.set_ylabel(f"P({action_labels[1]})", fontsize=11)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    _add_colorbar(fig, ax, cmap)
 
 def plot_simplex_trajectories(
     conn, runs_by_algo, scenario, out_dir, n_points=200,
+    show_title: bool = True,
 ):
     n_agents = n_actions = None
     for run_ids in runs_by_algo.values():
@@ -666,17 +770,17 @@ def plot_simplex_trajectories(
             break
 
     if n_agents is None:
-        print("  ⚠  No policy snapshots — skipping simplex plot.")
+        print("No policy snapshots — skipping simplex plot.")
         return
     if n_actions not in (2, 3):
-        print(f"  ⚠  Simplex plot supports 2 or 3 actions (found {n_actions}) — skipping.")
+        print(f"Simplex plot supports 2 or 3 actions (found {n_actions}) — skipping.")
         return
 
     action_labels = GAME_ACTION_LABELS.get(
         scenario, [f"A{i}" for i in range(n_actions)]
     )
     nash_list    = NASH_EQUILIBRIA.get(scenario, [])
-    title_prefix = scenario.replace("_", " ").title()
+    title_prefix = scenario_title(scenario)
 
     for algo_idx, (algo, run_ids) in enumerate(runs_by_algo.items()):
         cmap_name = _ALGO_CMAPS[algo_idx % len(_ALGO_CMAPS)]
@@ -684,59 +788,60 @@ def plot_simplex_trajectories(
 
         result = _collect_trajectories(conn, run_ids, n_points)
         if result is None:
-            print(f"  ⚠  No snapshots for algo='{algo}' — skipping simplex.")
+            print(f"No snapshots for algo='{algo}' — skipping simplex.")
             continue
-        _, interp_all = result
+        grid, interp_all = result
 
-        fig, axes = plt.subplots(1, n_agents, figsize=(4.5 * n_agents, 4.2),
-                                  squeeze=False)
-        axes = axes[0]
+        if n_actions == 3:
+            fig, axes = plt.subplots(1, n_agents, figsize=(5 * n_agents, 4.8),
+                                      squeeze=False)
+            axes = axes[0]
 
-        for ag, ax in enumerate(axes):
-            if n_actions == 3:
+            for ag, ax in enumerate(axes):
                 draw_simplex_triangle(ax, action_labels)
                 xy_seeds = barycentric_to_cartesian(interp_all[:, :, ag, :])
                 _draw_trajectory_2d(ax, xy_seeds, color, cmap_name)
                 if nash_list:
                     _mark_nash_3action(ax, nash_list, ag)
                 _add_colorbar(fig, ax, matplotlib.colormaps[cmap_name])
-                ax.set_title(f"Agent {ag}", pad=8)
-            else:
-                p_ag0    = interp_all[:, :, 0, 0]
-                p_ag1    = interp_all[:, :, 1, 0]
-                xy_seeds = np.stack([p_ag0, p_ag1], axis=-1)
-                ax.set_xlim(-0.05, 1.05)
-                ax.set_ylim(-0.05, 1.05)
-                ax.set_aspect("equal")
-                ax.spines["top"].set_visible(False)
-                ax.spines["right"].set_visible(False)
-                ax.set_xlabel(f"Agent 0  P({action_labels[0]})", fontsize=11)
-                ax.set_ylabel(f"Agent 1  P({action_labels[0]})", fontsize=11)
-                _draw_trajectory_2d(ax, xy_seeds, color, cmap_name)
-                if nash_list:
-                    _mark_nash_2action(ax, nash_list, ag)
-                _add_colorbar(fig, ax, matplotlib.colormaps[cmap_name])
-                ax.set_title(f"Agent {ag}", pad=8)
+                if show_title:
+                    ax.set_title(f"Agent {ag}", pad=8)
 
-        if nash_list:
-            nash_handle = Line2D([0], [0], marker="x", color="gray",
-                                  linewidth=0, markersize=8, markeredgewidth=2,
-                                  label="Nash eq.")
-            for ax in axes:
-                ax.legend(handles=[nash_handle], loc="upper right",
-                           framealpha=0.7, fontsize=9)
+            if nash_list:
+                nash_handle = Line2D([0], [0], marker="x", color="gray",
+                                      linewidth=0, markersize=8, markeredgewidth=2,
+                                      label="Nash eq.")
+                for ax in axes:
+                    ax.legend(handles=[nash_handle], loc="upper right",
+                               framealpha=0.7, fontsize=9)
 
-        fig.suptitle(
-            f"Simplex Trajectories — {title_prefix}   "
-            f"{algo}  (n={len(run_ids)} seeds)",
-            fontsize=13, y=1.02,
-        )
+        else:
+            fig, axes = plt.subplots(1, n_agents, figsize=(5.2 * n_agents, 5.0),
+                                      squeeze=False)
+            axes = axes[0]
+            for ag, ax in enumerate(axes):
+                _draw_phase_portrait_2action(
+                    ax, fig, interp_all, ag,
+                    action_labels, nash_list, color, cmap_name,
+                )
+                if show_title:
+                    ax.set_title(f"Agent {ag}", pad=8)
+            if nash_list:
+                nash_handle = Line2D([0], [0], marker="x", color="black",
+                                      linewidth=0, markersize=8, markeredgewidth=2,
+                                      label="Nash eq.")
+                for ax in axes:
+                    ax.legend(handles=[nash_handle], loc="upper right",
+                               framealpha=0.8, fontsize=9)
+
+        if show_title:
+            fig.suptitle(
+                f"Simplex Trajectories — {title_prefix}   "
+                f"{algo}  (n={len(run_ids)} seeds)",
+                fontsize=13, y=1.02,
+            )
         fig.tight_layout()
         savefig(fig, out_dir, f"simplex_{algo}.pdf")
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Gridworld: multi-panel coordination dashboard
-# ─────────────────────────────────────────────────────────────────────────────
 
 def plot_gridworld_dashboard(
     conn,
@@ -745,13 +850,13 @@ def plot_gridworld_dashboard(
     out_dir: str,
     n_points: int = 200,
     phase_metric: str | None = None,
+    show_title: bool = True,
 ):
     """
     Single figure with one panel per available coordination metric,
     so you get a compact overview of the run without many separate files.
     Laid out as a 2-column grid.
     """
-    # Coordination metrics to include in the dashboard (subset of catalogue)
     DASHBOARD_KEYS = [
         ("success_rate",          "Success Rate",            None,  None),
         ("phase_correct_rate",    "Phase-Correct Rate",      1.0,   "Perfect"),
@@ -766,13 +871,12 @@ def plot_gridworld_dashboard(
     for run_ids in runs_by_algo.values():
         all_run_ids.update(run_ids)
 
-    # Only keep panels for metrics that actually have data
     available = [
         entry for entry in DASHBOARD_KEYS
         if metric_exists(conn, all_run_ids, entry[0])
     ]
     if not available:
-        print("  ⚠  No coordination metrics found — skipping dashboard.")
+        print("No coordination metrics found — skipping dashboard.")
         return
 
     n_panels = len(available)
@@ -780,7 +884,7 @@ def plot_gridworld_dashboard(
     n_rows   = (n_panels + 1) // n_cols
 
     fig, axes = plt.subplots(n_rows, n_cols,
-                              figsize=(6.5 * n_cols, 4 * n_rows),
+                              figsize=(7 * n_cols, 4.5 * n_rows),
                               squeeze=False)
 
     for panel_idx, (metric_key, ylabel, hline, hlabel) in enumerate(available):
@@ -813,26 +917,24 @@ def plot_gridworld_dashboard(
 
         ax.set_xlabel("Environment Steps")
         ax.set_ylabel(ylabel)
-        ax.set_title(ylabel)
+        if show_title:
+            ax.set_title(ylabel)
         ax.xaxis.set_major_formatter(mticker.FuncFormatter(fmt_steps))
         ax.legend(fontsize=8)
 
-    # Hide any unused panels in the last row
     for panel_idx in range(len(available), n_rows * n_cols):
         row, col = divmod(panel_idx, n_cols)
         axes[row][col].set_visible(False)
 
-    title_prefix = scenario.replace("_", " ").title()
-    fig.suptitle(
-        f"Coordination Metrics — {title_prefix}",
-        fontsize=14, y=1.01,
-    )
+    title_prefix = scenario_title(scenario)
+    if show_title:
+        fig.suptitle(
+            f"Coordination Metrics — {title_prefix}",
+            fontsize=14, y=1.01,
+        )
     fig.tight_layout()
     savefig(fig, out_dir, "coordination_dashboard.pdf")
 
-# ─────────────────────────────────────────────────────────────────────────────
-# CLI
-# ─────────────────────────────────────────────────────────────────────────────
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
@@ -847,6 +949,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--out_dir", default="outputs/plots")
     p.add_argument("--seeds",   nargs="*", type=int, default=None)
     p.add_argument("--n_points", type=int, default=200)
+    p.add_argument("--phase",    type=int, default=1, choices=[0, 1],
+                   help="Draw phase-change lines on plots (1=yes [default], 0=no).")
+    p.add_argument("--no_title", action="store_true",
+                   help="Omit embedded titles from all plots (recommended for papers).")
     return p.parse_args()
 
 
@@ -856,11 +962,9 @@ def main():
     out_dir  = os.path.join(args.out_dir, scenario)
     conn     = _connect(args.db)
 
-    # ── resolve scenario catalogue entry ────────────────────────────────────
     if scenario in SCENARIO_CATALOGUE:
         cat = SCENARIO_CATALOGUE[scenario]
     else:
-        # Auto-detect VMAS: check the env_type stored in the DB.
         row = conn.execute(
             "SELECT env_type FROM runs WHERE scenario=? LIMIT 1", (scenario,)
         ).fetchone()
@@ -874,9 +978,9 @@ def main():
                 f"Known scenarios: {known}\n"
                 f"For VMAS scenarios the env_type must be 'vmas' in the DB."
             )
-    phase_metric = cat["phase_metric"]   # str | None
+    phase_metric = cat["phase_metric"] if args.phase else None   # str | None
+    display_name = cat.get("display_name", None)
 
-    # ── resolve algos ────────────────────────────────────────────────────────
     if args.algos:
         algos = args.algos
     elif args.algo:
@@ -886,11 +990,15 @@ def main():
         if not algos:
             raise ValueError(f"No runs for scenario='{scenario}' in {args.db}")
 
+    show_title = not args.no_title
+
     print(f"\n[plot] scenario     : {scenario}  ({cat['family']})")
     print(f"[plot] algos        : {algos}")
     print(f"[plot] db           : {args.db}")
     print(f"[plot] out_dir      : {out_dir}")
-    print(f"[plot] phase_metric : {phase_metric or 'none'}")
+    print(f"[plot] phase lines  : {'on' if args.phase else 'off'}  (metric: {phase_metric or 'none'})")
+    print(f"[plot] display_name : {display_name or scenario_title(scenario)}")
+    print(f"[plot] titles       : {'on' if show_title else 'off (paper mode)'}")
     print(f"[plot] seeds        : {'all' if args.seeds is None else args.seeds}\n")
 
     runs_by_algo = load_runs_by_algo(conn, scenario, algos, seeds=args.seeds)
@@ -899,7 +1007,6 @@ def main():
     print()
     print("[plot] Generating figures …")
 
-    # ── per-metric scalar plots (catalogue-driven) ───────────────────────────
     for m in cat["metrics"]:
         plot_scalar_metric(
             conn, runs_by_algo,
@@ -913,26 +1020,29 @@ def main():
             hline_label  = m["hlabel"],
             n_points     = args.n_points,
             phase_metric = phase_metric,
+            display_name = display_name,
+            show_title   = show_title,
         )
 
-    # ── family-specific extras ───────────────────────────────────────────────
     if cat["family"] == "matrix_games":
-        plot_policy_probs(
-            conn, runs_by_algo, scenario, out_dir,
-            n_points=args.n_points, phase_metric=phase_metric,
-        )
+        if cat.get("policy_probs", True):
+            plot_policy_probs(
+                conn, runs_by_algo, scenario, out_dir,
+                n_points=args.n_points, phase_metric=phase_metric,
+                show_title=show_title,
+            )
         if cat.get("simplex", False):
             plot_simplex_trajectories(
-                conn, runs_by_algo, scenario, out_dir, n_points=args.n_points
+                conn, runs_by_algo, scenario, out_dir,
+                n_points=args.n_points, show_title=show_title,
             )
 
     elif cat["family"] == "gridworld":
         plot_gridworld_dashboard(
             conn, runs_by_algo, scenario, out_dir,
             n_points=args.n_points, phase_metric=phase_metric,
+            show_title=show_title,
         )
-
-    # vmas: only the reward scalar plot above — nothing extra needed.
 
     conn.close()
     print("\n[plot] Done.")

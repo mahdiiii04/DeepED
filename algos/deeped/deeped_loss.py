@@ -68,7 +68,6 @@ class DeepEDLoss(LossModule):
             gamma: float = 0.99,
             reduction: str = "mean",
             functional: bool = True,
-            # ── new: average-actor EMA rate ──────────────────────────────────
             avg_actor_tau: float = 0.02,
             dynamics: str = "smith",
     ):
@@ -147,7 +146,6 @@ class DeepEDLoss(LossModule):
     # ─────────────────────────────────────────────────────────────────────────
 
     def soft_update_target(self, tau: float = 0.005) -> None:
-        """EMA update of the target critic (stabilises TD targets)."""
         if not self.functional or self.target_critic_network_params is None:
             return
         with torch.no_grad():
@@ -158,16 +156,6 @@ class DeepEDLoss(LossModule):
                 p_target.data.lerp_(p_live.data, tau)
 
     def soft_update_avg_actor(self, tau: float | None = None) -> None:
-        """EMA update of the average actor.
-
-        The average actor accumulates the time-average of the policy.
-        Under replicator dynamics the time-average converges to Nash, so
-        using it for critic bootstrapping gives a stationary, Nash-consistent
-        value target — breaking the best-response oscillation cycle.
-
-        Call this *after* every actor gradient step (same cadence as
-        ``soft_update_target``).
-        """
         if not self.functional or self.avg_actor_network_params is None:
             return
         if tau is None:
@@ -186,14 +174,6 @@ class DeepEDLoss(LossModule):
     def _get_action_probs(
             self, tensordict: TensorDictBase, use_avg: bool = False
     ) -> torch.Tensor:
-        """Return π(·|s) from either the live actor or the average actor.
-
-        Args:
-            tensordict: Input tensordict (current or next state).
-            use_avg:    If True, use the EMA average actor instead of the live
-                        one.  Pass True when computing V_next for TD targets —
-                        this is the key change that stops critic oscillation.
-        """
         if self.functional:
             if use_avg and self.avg_actor_network_params is not None:
                 params = self.avg_actor_network_params
@@ -280,10 +260,6 @@ class DeepEDLoss(LossModule):
     # ─────────────────────────────────────────────────────────────────────────
 
     def _policy_update(self, pi: torch.Tensor, q: torch.Tensor) -> torch.Tensor:
-        """q_centered = q - q.mean(dim=-1, keepdim=True)
-        scale = q_centered.abs().mean(dim=-1, keepdim=True) + 1e-6
-        q_norm = q_centered / scale"""
-
         q_i = q.unsqueeze(-1)   # (batch, n_agents, n_actions, 1)
         q_j = q.unsqueeze(-2)   # (batch, n_agents, 1, n_actions)
         R   = torch.clamp(q_i - q_j, min=0.0)
@@ -299,89 +275,31 @@ class DeepEDLoss(LossModule):
     
         
     def _policy_update_bnn(self, pi: torch.Tensor, q: torch.Tensor) -> torch.Tensor:
-        """Brown-von Neumann-Nash (BNN) policy update.
+        q_i = q.unsqueeze(-1)                            
+        q_j = q.unsqueeze(-2)                              
+        adv_i_over_j = torch.clamp(q_i - q_j, min=0.0)    
+        F = torch.einsum("...j,...ij->...i", pi, adv_i_over_j)  
 
-        BNN mean dynamic (same inflow/outflow structure as Smith and Replicator):
+        F_bar = (pi * F).sum(dim=-1, keepdim=True)         
 
-            π'_i = π_i + α · ( [F_i(π) - F̄(π)]₊  −  π_i · Σ_j [F_j(π) - F̄(π)]₊ )
+        excess = torch.clamp(F - F_bar, min=0.0)           
 
-        where:
-            F_i(π) = Σ_j π_j · [Q_i - Q_j]₊   (average pairwise advantage of action i)
-            F̄(π)  = Σ_i π_i · F_i(π)           (mean fitness under π)
+        total_excess = excess.sum(dim=-1, keepdim=True)   
 
-        The inflow  [F_i - F̄]₊  grows actions whose excess fitness is positive;
-        the outflow  π_i · Σ_j [F_j - F̄]₊  drains mass from i proportionally
-        to its current weight — preserving the simplex exactly as Smith does.
-
-        Args:
-            pi: Current policy probabilities  (batch, n_agents, n_actions).
-            q:  Q-values                       (batch, n_agents, n_actions).
-
-        Returns:
-            pi_prime: Updated policy on the probability simplex,
-                      same shape as pi.
-        """
-        # F_i = Σ_j π_j · [Q_i - Q_j]₊
-        q_i = q.unsqueeze(-1)                              # (..., n_actions, 1)
-        q_j = q.unsqueeze(-2)                              # (..., 1, n_actions)
-        adv_i_over_j = torch.clamp(q_i - q_j, min=0.0)    # (..., n_actions, n_actions)
-        F = torch.einsum("...j,...ij->...i", pi, adv_i_over_j)  # (..., n_actions)
-
-        # F̄(π) = Σ_i π_i · F_i
-        F_bar = (pi * F).sum(dim=-1, keepdim=True)         # (..., 1)
-
-        # Excess fitness: [F_i - F̄]₊
-        excess = torch.clamp(F - F_bar, min=0.0)           # (..., n_actions)
-
-        # Total excess (scalar): Σ_j [F_j - F̄]₊
-        total_excess = excess.sum(dim=-1, keepdim=True)    # (..., 1)
-
-        # BNN mean dynamic: inflow - outflow
         pi_prime = pi + self.alpha * (excess - pi * total_excess)
 
-        # Clamp and renormalise (guards numerical drift for large α)
         pi_prime = torch.clamp(pi_prime, min=0.0)
         pi_prime = pi_prime / pi_prime.sum(dim=-1, keepdim=True).clamp(min=1e-8)
 
         return pi_prime
 
     def _policy_update_replicator(self, pi: torch.Tensor, q: torch.Tensor) -> torch.Tensor:
-        """Replicator dynamics policy update.
+        v_pi = (pi * q).sum(dim=-1, keepdim=True)     
 
-        Discrete-time replicator equation:
-            π'_i  =  π_i · (1 + α · (Q_i - V(π))) / Z
-
-        where  V(π) = Σ_i π_i · Q_i  is the expected value under π, and
-        Z normalises the result back onto the simplex.
-
-        Replicator dynamics is the canonical baseline in evolutionary game
-        theory: strategies that earn above-average fitness grow, those below
-        shrink, and strategies already at zero stay there (no mutation term).
-        The multiplicative structure keeps π strictly on the interior of the
-        simplex as long as the initial policy is interior and α is small.
-
-        Note:  unlike Smith and BNN, replicator dynamics is *not* a valid
-        Lyapunov revision protocol in all games, but it converges to Nash in
-        zero-sum and potential games and is useful as a diagnostic comparison.
-
-        Args:
-            pi:    Current policy probabilities  (batch, n_agents, n_actions).
-            q:     Q-values                       (batch, n_agents, n_actions).
-
-        Returns:
-            pi_prime: Updated policy on the probability simplex,
-                      same shape as pi.
-        """
-        # Expected value V(π) = Σ_i π_i Q_i
-        v_pi = (pi * q).sum(dim=-1, keepdim=True)      # (..., 1)
-
-        # Unnormalised replicator step
         pi_prime = pi * (1.0 + self.alpha * (q - v_pi))
 
-        # Clamp to ensure non-negativity (can go negative for large α)
         pi_prime = torch.clamp(pi_prime, min=0.0)
 
-        # Renormalise onto the simplex
         pi_prime = pi_prime / pi_prime.sum(dim=-1, keepdim=True).clamp(min=1e-8)
 
         return pi_prime
@@ -401,7 +319,7 @@ class DeepEDLoss(LossModule):
     def forward(self, tensordict: TensorDictBase) -> TensorDictBase:
         tensordict = tensordict.clone(recurse=False)
 
-        pi     = self._get_action_probs(tensordict, use_avg=False)   # live actor
+        pi     = self._get_action_probs(tensordict, use_avg=False)   
         q_vals = self._get_q_values(tensordict)
 
         with torch.no_grad():
