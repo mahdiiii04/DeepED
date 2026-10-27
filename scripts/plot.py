@@ -105,6 +105,23 @@ SCENARIO_CATALOGUE: dict[str, dict] = {
         simplex=False,
         policy_probs=False,
     ),
+    "rotating_potential": dict(
+        family="matrix_games",
+        phase_metric="env/phase",
+        metrics=[
+            _M("nash/nash_conv",            "nash_conv.pdf",
+               "Nash Convergence",          "Nash Convergence",
+               hline=0.0, hlabel="Nash equilibrium"),
+            _M("nash/potential",            "potential.pdf",
+               "Potential",                 "Potential of the Joint Policy",
+               hline=6.0, hlabel="Max potential (v)"),   # = env v; edit if you change v
+            _M("reward/mean_episode_reward","reward.pdf",
+               "Mean Episode Reward",       "Episode Reward"),
+        ],
+        simplex=True,
+        policy_probs=True,
+        nash_label="Per-phase Nash eq.",
+    ),
     # ── gridworld ───────────────────────────────────────────────────────────
     "cooperative_nav": dict(
         family="gridworld",
@@ -221,6 +238,16 @@ NASH_EQUILIBRIA: dict[str, list[tuple[list[float], list[float]]]] = {
     "battle_of_sexes": [([1.0, 0.0], [1.0, 0.0]),
                         ([0.0, 1.0], [0.0, 1.0])],
 }
+
+GAME_ACTION_LABELS["rotating_potential"] = ["Action 0", "Action 1", "Action 2"]
+
+# The equilibrium moves: phase k has the single pure equilibrium (k, k).
+# All three vertices are marked; only one is the equilibrium in any given phase.
+NASH_EQUILIBRIA["rotating_potential"] = [
+    ([1.0, 0.0, 0.0], [1.0, 0.0, 0.0]),
+    ([0.0, 1.0, 0.0], [0.0, 1.0, 0.0]),
+    ([0.0, 0.0, 1.0], [0.0, 0.0, 1.0]),
+]
 
 def _connect(db_path: str) -> sqlite3.Connection:
     if not Path(db_path).exists():
@@ -758,6 +785,7 @@ def _draw_phase_portrait_2action(
 def plot_simplex_trajectories(
     conn, runs_by_algo, scenario, out_dir, n_points=200,
     show_title: bool = True,
+    nash_label: str = "Nash eq.",
 ):
     n_agents = n_actions = None
     for run_ids in runs_by_algo.values():
@@ -810,7 +838,7 @@ def plot_simplex_trajectories(
             if nash_list:
                 nash_handle = Line2D([0], [0], marker="x", color="gray",
                                       linewidth=0, markersize=8, markeredgewidth=2,
-                                      label="Nash eq.")
+                                      label=nash_label)
                 for ax in axes:
                     ax.legend(handles=[nash_handle], loc="upper right",
                                framealpha=0.7, fontsize=9)
@@ -829,7 +857,7 @@ def plot_simplex_trajectories(
             if nash_list:
                 nash_handle = Line2D([0], [0], marker="x", color="black",
                                       linewidth=0, markersize=8, markeredgewidth=2,
-                                      label="Nash eq.")
+                                      label=nash_label)
                 for ax in axes:
                     ax.legend(handles=[nash_handle], loc="upper right",
                                framealpha=0.8, fontsize=9)
@@ -1035,6 +1063,7 @@ def main():
             plot_simplex_trajectories(
                 conn, runs_by_algo, scenario, out_dir,
                 n_points=args.n_points, show_title=show_title,
+                nash_label=cat.get("nash_label", "Nash eq."),
             )
 
     elif cat["family"] == "gridworld":

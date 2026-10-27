@@ -406,12 +406,171 @@ class BiasedRPSEnv(MatrixGameEnv):
             "env/phase": self._current_phase[0].item(),
         }
     
+class RotatingPotentialGameEnv(MatrixGameEnv):
+    """
+    Non-stationary exact potential game (coordination with a moving target).
+
+    The game is defined through a potential matrix ``P_t`` (3 x 3) and
+    fixed per-player dummy terms::
+
+        u_0(a0, a1) = P_t[a0, a1] + d_0[a1]
+        u_1(a0, a1) = P_t[a0, a1] + d_1[a0]
+
+    Because each dummy term depends only on the OPPONENT's action, a unilateral
+    deviation changes ``u_i`` exactly as it changes ``P_t``. Hence ``P_t`` is an
+    exact potential at every phase, while the two players' payoffs are not
+    identical (the dummies only break the "pure team game" symmetry; they do
+    not change best responses or NashConv).
+
+    Potential
+    ---------
+    With ``k = phase % 3`` the *active* action::
+
+        P_t[k, k]            = v        (the target coordination outcome)
+        P_t[k, j] = P_t[j, k] = bridge  for j != k
+        P_t[j, l]            = 0        otherwise (including (j, j), j != k)
+
+    Why this design: with ``v > bridge > 0`` the only PURE Nash equilibrium of
+    phase ``k`` is ``(k, k)``. Every other coordinated outcome ``(j, j)`` is
+    not an equilibrium because both players gain ``bridge`` by switching to
+    ``k``. So when the phase rotates, a policy sitting at the old equilibrium
+    is exploitable (NashConv jumps to ``2 * bridge``) and must move. If all
+    diagonal entries were positive, every ``(j, j)`` would stay an equilibrium
+    in every phase and nothing would need tracking.
+
+    Phase ``p`` -> ``p + 1`` happens every ``phase_length`` environment steps,
+    counted exactly as in ``BiasedRPSEnv``. The phase is NOT part of the
+    agents' observation; it is only exposed through the extra keys ``phase``
+    and ``phase_changed`` in the tensordict (do not feed them to the policy).
+
+    default: v = 6, bridge = 1, phase_length = 3000, dummy_scale = 0.5.
+    """
+
+    n_agents = 2
+    n_actions = 3
+
+    def __init__(
+            self,
+            v: float = 6.,
+            bridge: float = 1.,
+            phase_length: int = 3000,
+            dummy_scale: float = 0.5,
+            dummy_seed: int = 0,
+            **kwargs,
+    ):
+        if not (v > bridge > 0):
+            raise ValueError(
+                "Need v > bridge > 0 so that (active, active) is the only "
+                f"pure equilibrium of each phase (got v={v}, bridge={bridge})."
+            )
+        self._v = v
+        self._bridge = bridge
+        self._phase_length = phase_length
+
+        # Fixed dummy terms, drawn from a private generator so they do not
+        # depend on (or disturb) the global RNG. Stored as python lists.
+        g = torch.Generator().manual_seed(dummy_seed)
+        self._dummy = (
+            dummy_scale * torch.rand(2, self.n_actions, generator=g)
+        ).tolist()
+
+        super().__init__(**kwargs)
+
+        self.register_buffer(
+            "_current_phase",
+            torch.zeros(self._num_envs, dtype=torch.long, device=self.device),
+        )
+        self.register_buffer(
+            "_total_steps",
+            torch.zeros(self._num_envs, dtype=torch.long, device=self.device),
+        )
+
+    ######################## Game definition ########################
+
+    def _potential_for(self, phase: int) -> torch.Tensor:
+        P = torch.zeros(self.n_actions, self.n_actions, dtype=torch.float32)
+        P[phase, :] = self._bridge
+        P[:, phase] = self._bridge
+        P[phase, phase] = self._v
+        return P
+
+    def _build_payoff(self, **_) -> torch.Tensor:
+        if hasattr(self, "_current_phase"):
+            phase = int(self._current_phase[0].item())
+        else:
+            phase = 0
+
+        P = self._potential_for(phase)
+        d = torch.tensor(self._dummy, dtype=torch.float32)  # [2, n_actions]
+
+        u0 = P + d[0][None, :]   # depends on opponent action a1 (columns)
+        u1 = P + d[1][:, None]   # depends on opponent action a0 (rows)
+        return torch.stack([u0, u1], dim=0)
+
+    ######################## Potential utilities ########################
+
+    def potential_matrix(self) -> torch.Tensor:
+        """Potential matrix of the CURRENT phase, shape [n_actions, n_actions]."""
+        phase = int(self._current_phase[0].item())
+        return self._potential_for(phase).to(self.device)
+
+    @torch.no_grad()
+    def potential(self, pi: torch.Tensor) -> float:
+        """
+        Exact potential of a mixed profile ``pi`` of shape
+        ``[n_agents, n_actions]`` in the current phase. Log this next to
+        NashConv: within a phase it should rise, and it drops at a shift.
+        """
+        pi = pi.to(self.device)
+        return torch.einsum(
+            "a,ab,b->", pi[0], self.potential_matrix(), pi[1]
+        ).item()
+
+    def equilibrium_action(self) -> int:
+        """Action of the unique pure equilibrium of the current phase."""
+        return int(self._current_phase[0].item())
+
+    ######################## Dynamics ########################
+
+    def _reset(self, tensordict=None):
+        td = super()._reset(tensordict)
+        td.set("phase", self._current_phase.clone())
+        td.set(
+            "phase_changed",
+            torch.zeros(self._num_envs, dtype=torch.bool, device=self.device),
+        )
+        return td
+
+    def _step(self, tensordict: TensorDict):
+        self._total_steps.add_(1)
+        old_phase = self._current_phase.clone()
+
+        td = super()._step(tensordict)
+
+        phase_changed = torch.zeros(self._num_envs, dtype=torch.bool, device=self.device)
+        if (self._total_steps[0] % self._phase_length == 0) and (self._total_steps[0] > 0):
+            self._current_phase.add_(1)
+            self._current_phase %= self.n_actions
+            self._payoff = self._build_payoff().to(self.device)
+            phase_changed = (self._current_phase != old_phase)
+
+        td.set("phase", self._current_phase.clone())
+        td.set("phase_changed", phase_changed)
+
+        return td
+
+    def get_extra_metrics(self) -> dict:
+        return {
+            "env/phase": self._current_phase[0].item(),
+        }
+
 #################### Registry ###################
 
 _REGISTRY: dict[str, type[MatrixGameEnv]] = {
     "stag_hunt": StagHuntEnv,
     "battle_of_sexes": BattleOfSexesEnv,
     "biased_rps": BiasedRPSEnv,
+    "rotating_potential": RotatingPotentialGameEnv,
 }
 
 ##################### Factory ####################
@@ -458,4 +617,3 @@ def MatrixGameFactory(
         seed=seed,
         **kwargs,
     )
-
