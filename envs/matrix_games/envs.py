@@ -443,6 +443,13 @@ class RotatingPotentialGameEnv(MatrixGameEnv):
     agents' observation; it is only exposed through the extra keys ``phase``
     and ``phase_changed`` in the tensordict (do not feed them to the policy).
 
+    Phase order: ``phase_order="cyclic"`` visits 0,1,2,0,... ; ``"random"``
+    draws the next active action uniformly among the OTHER actions from a
+    private generator seeded by ``phase_seed`` (never repeats, so every
+    boundary is a real change). Use the training seed as ``phase_seed`` so all
+    algorithms see the same schedule for a given seed. A frozen policy gets
+    1/3 free credit under "cyclic"; "random" removes that artefact.
+
     default: v = 6, bridge = 1, phase_length = 3000, dummy_scale = 0.5.
     """
 
@@ -456,8 +463,14 @@ class RotatingPotentialGameEnv(MatrixGameEnv):
             phase_length: int = 3000,
             dummy_scale: float = 0.5,
             dummy_seed: int = 0,
+            phase_order: str = "cyclic",
+            phase_seed: int = 0,
             **kwargs,
     ):
+        if phase_order not in ("cyclic", "random"):
+            raise ValueError(f"phase_order must be 'cyclic' or 'random', got {phase_order!r}")
+        self._phase_order = phase_order
+        self._phase_seed = phase_seed
         if not (v > bridge > 0):
             raise ValueError(
                 "Need v > bridge > 0 so that (active, active) is the only "
@@ -476,6 +489,8 @@ class RotatingPotentialGameEnv(MatrixGameEnv):
 
         super().__init__(**kwargs)
 
+        self._phase_rng = torch.Generator().manual_seed(phase_seed)
+
         self.register_buffer(
             "_current_phase",
             torch.zeros(self._num_envs, dtype=torch.long, device=self.device),
@@ -486,6 +501,14 @@ class RotatingPotentialGameEnv(MatrixGameEnv):
         )
 
     ######################## Game definition ########################
+
+    def _next_phase(self, cur: int) -> int:
+        M = self.n_actions
+        if self._phase_order == "cyclic":
+            return (cur + 1) % M
+        others = [a for a in range(M) if a != cur]
+        idx = int(torch.randint(len(others), (1,), generator=self._phase_rng).item())
+        return others[idx]
 
     def _potential_for(self, phase: int) -> torch.Tensor:
         P = torch.zeros(self.n_actions, self.n_actions, dtype=torch.float32)
@@ -549,8 +572,7 @@ class RotatingPotentialGameEnv(MatrixGameEnv):
 
         phase_changed = torch.zeros(self._num_envs, dtype=torch.bool, device=self.device)
         if (self._total_steps[0] % self._phase_length == 0) and (self._total_steps[0] > 0):
-            self._current_phase.add_(1)
-            self._current_phase %= self.n_actions
+            self._current_phase.fill_(self._next_phase(int(old_phase[0].item())))
             self._payoff = self._build_payoff().to(self.device)
             phase_changed = (self._current_phase != old_phase)
 
@@ -617,3 +639,4 @@ def MatrixGameFactory(
         seed=seed,
         **kwargs,
     )
+

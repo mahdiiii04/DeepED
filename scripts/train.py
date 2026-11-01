@@ -16,6 +16,8 @@ from envs import make_env as _make_env_dispatch
 from algos import build_algorithm
 from shared import ResultsDB, extract_avg_policy, evaluate_policy, DoneTransform
 from envs.matrix_games import compute_nash_conv, MinMaxRewardTransform
+from envs.gridworld.team_nash import team_nash_stats
+from shared.grid_policy import policy_state_probs
 
 def _resolve_cfg(cfg: DictConfig):
     cfg.train.device = "cpu" if not torch.cuda.is_available() else "cuda:0"
@@ -91,6 +93,10 @@ def train(cfg: DictConfig):
 
     #──── main loop ────────────────────────────────────────────────
     total_frames = 0
+    # [PATCH] eval uses a separate env whose non-stationarity clock is NOT synced
+    # with training, so eval reward is meaningless in phase-switching games.
+    # Disable per config with `eval.enabled: false`.
+    eval_enabled = cfg.eval.get("enabled", True)
     
     for i, tensordict_data in enumerate(collector):
         algo.after_collect(tensordict_data)
@@ -127,6 +133,8 @@ def train(cfg: DictConfig):
             **(env.get_extra_metrics() if hasattr(env, "get_extra_metrics") else {}),
         }
         if cfg.env_type == "matrix_games":
+            # [PATCH] extract_avg_policy now snapshots/restores the env state, so
+            # the phase seen here (env/phase above) and by compute_nash_conv agree.
             avg_policy = extract_avg_policy(
                 env,
                 algo.policy,
@@ -139,6 +147,23 @@ def train(cfg: DictConfig):
             db.log_policy(run_id, global_step, avg_policy)
 
             scalar_metrics["nash/nash_conv"] = nash
+            # [PATCH] exact potential of the joint average policy (games that define it)
+            if hasattr(env, "potential"):
+                scalar_metrics["nash/potential"] = env.potential(avg_policy)
+
+        # [PATCH] exact NashConv / potential for the team-reward grid game (Markov potential game)
+        if cfg.env_type == "gridworld" and hasattr(env, "exact_tables"):
+            probs = policy_state_probs(
+                env, algo.policy,
+                policy_type=cfg.get("policy_type", "actor"),
+                temperature=cfg.eval.get("qnet_temperature", 0.0),
+            )
+            next_state, reward_tab = env.exact_tables()
+            st = team_nash_stats(next_state, reward_tab, probs, cfg.loss.gamma)
+            scalar_metrics["nash/nash_conv"] = st["nash_conv"]
+            scalar_metrics["nash/potential"] = st["value"]            # team value = exact potential
+            scalar_metrics["nash/optimal_value"] = st["optimal_value"]
+            scalar_metrics["nash/value_gap"] = st["value_gap"]
 
         #──── logging ────────────────────────────────────────────
         db.log_metrics(run_id, global_step, scalar_metrics)
@@ -147,7 +172,7 @@ def train(cfg: DictConfig):
             writer.add_scalar(k, v, global_step=global_step)
 
         #──── evaluation ─────────────────────────────────────────
-        if (i % cfg.eval.frequency == 0 or i == cfg.collector.n_iters - 1):
+        if eval_enabled and (i % cfg.eval.frequency == 0 or i == cfg.collector.n_iters - 1):
             eval_reward = evaluate_policy(env_test=env_test, policy=algo.policy)
             db.log_metrics(
                 run_id, global_step, {"eval/mean_episode_reward": eval_reward}
@@ -163,7 +188,7 @@ def train(cfg: DictConfig):
     db.close()
     for e in (env, env_test):
         if not e.is_closed:
-            env.close()
+            e.close()          # [PATCH] was env.close(): closed env twice, never env_test
 
     torchrl_logger.info(f"Done. Results in {db_path} (run_id={run_id})")
 

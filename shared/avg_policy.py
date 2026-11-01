@@ -1,15 +1,35 @@
+import contextlib
+
 import torch
 from tensordict import TensorDict
 from torchrl.envs.utils import ExplorationType, set_exploration_type
 
 #──── helpers ────────────────────────────────────────────
 
+@contextlib.contextmanager
+def _frozen_env_state(env):
+    """
+    Snapshot and restore the base env's registered buffers (step counters,
+    phase, payoff, ...). Extracting the average policy rolls the *training*
+    env forward; without this, every call advances the non-stationarity clock
+    and resets the episode counter the collector relies on.
+    """
+    base = getattr(env, "base_env", env)
+    saved = {n: b.detach().clone() for n, b in base.named_buffers(recurse=False)}
+    try:
+        yield
+    finally:
+        with torch.no_grad():
+            for n, val in saved.items():
+                getattr(base, n).copy_(val)
+
+
 def _rollout(
-    env, 
+    env,
     policy,
 ) -> tuple[TensorDict, int, int]:
-    
-    with set_exploration_type(ExplorationType.DETERMINISTIC), torch.no_grad():
+
+    with _frozen_env_state(env), set_exploration_type(ExplorationType.DETERMINISTIC), torch.no_grad():
         td = env.rollout(
             max_steps=env.max_steps,
             policy=policy,
@@ -38,14 +58,14 @@ def _flat_obs(
 #──── public ───────────────────────────────────────────────────
 @torch.no_grad()
 def extract_avg_policy(
-    env, 
+    env,
     policy,
     *,
     policy_type: str = "actor",
     temperature: float = 1.0,
     device: str | torch.device | None = None
 ) -> torch.Tensor:
-    
+
     if device is None:
         device = env.device
 

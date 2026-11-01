@@ -1,0 +1,58 @@
+seed: 0
+experiment_name: AblationRPot
+env_type: matrix_games
+algo_name: deep_ed_replicator
+sub_exp: ${env.scenario_name}/${algo_name}
+
+env:
+  scenario_name: rotating_potential
+  num_envs: null
+  max_steps: 100
+  device: null
+  kwargs:
+    v: 6.0
+    bridge: 1.0
+    phase_length: 1500        # counts COLLECTOR env steps only (100 per iteration)
+    dummy_scale: 0.5          # set 0.0 for a pure team game (see notes)
+    dummy_seed: 0
+    phase_order: random       # "cyclic" | "random"
+    phase_seed: ${seed}       # same schedule for all algorithms at a given seed
+
+model:
+  shared_params: False
+  centralized_critic: True
+  depth: 2
+  num_cells: 64
+
+collector:
+  frames_per_batch: 51200
+  n_iters: 150
+  total_frames: null
+
+buffer:
+  memory_size: null
+
+train:
+  num_epochs: 10
+  minibatch_size: 4096
+  actor_lr: 1e-4
+  critic_lr: 1e-3
+  max_grad_norm: 40.0
+  device: null
+  tau: 0.005
+
+loss:
+  entropy_eps: 0.01
+  alpha: 0.1
+  gamma: 0.9
+  dynamics: replicator
+  safe_step: false
+
+eval:
+  enabled: false
+  frequency: 10
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null

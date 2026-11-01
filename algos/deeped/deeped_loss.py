@@ -70,6 +70,7 @@ class DeepEDLoss(LossModule):
             functional: bool = True,
             avg_actor_tau: float = 0.02,
             dynamics: str = "smith",
+            safe_step: bool = False,                       # [PATCH]
     ):
         self._functional = functional
         super().__init__()
@@ -84,8 +85,12 @@ class DeepEDLoss(LossModule):
             self.critic_network = critic_network
             self.target_critic_network_params = None
             self.avg_actor_network_params = None
-        
+
+        if dynamics not in ("smith", "bnn", "replicator", "softmax"):   # [PATCH]
+            raise ValueError(f"Unknown dynamics '{dynamics}'.")
         self.dynamics = dynamics
+        self.safe_step = safe_step                         # [PATCH]
+        self.diag = {}                                     # [PATCH] last-minibatch diagnostics
 
         self.avg_actor_tau = avg_actor_tau
 
@@ -256,8 +261,38 @@ class DeepEDLoss(LossModule):
         return entropy.unsqueeze(-1)
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Replicator-inspired policy update (actor target)
+    # Evolutionary / target-policy updates (actor target)
     # ─────────────────────────────────────────────────────────────────────────
+
+    def _effective_alpha(self, q: torch.Tensor):                       # [PATCH]
+        """
+        Plain step size, or (safe_step=True) the per-state step
+        min(alpha, 1 / ((M-1) * range(Q))), which guarantees the raw Smith
+        update stays on the simplex (condition A6 in the theory) so the
+        clamp below never changes the update.
+        """
+        if not self.safe_step:
+            return self.alpha
+        M = q.shape[-1]
+        q_range = q.max(dim=-1, keepdim=True).values - q.min(dim=-1, keepdim=True).values
+        return torch.minimum(self.alpha, 1.0 / ((M - 1) * q_range + 1e-8))
+
+    @torch.no_grad()
+    def _record_diag(self, pi_prime_raw: torch.Tensor, q: torch.Tensor) -> None:   # [PATCH]
+        """
+        diag/clamp_frac     : fraction of (sample, agent) pairs whose raw Smith
+                              update had a negative entry (i.e. the clamp acted).
+        diag/step_cond_*    : alpha * (M-1) * range(Q). <= 1 means the step-size
+                              condition holds (theory covers the raw update).
+        """
+        M = q.shape[-1]
+        q_range = q.max(dim=-1).values - q.min(dim=-1).values
+        cond = self.alpha * (M - 1) * q_range
+        self.diag = {
+            "diag/clamp_frac":     (pi_prime_raw < 0).any(dim=-1).float().mean().item(),
+            "diag/step_cond_mean": cond.mean().item(),
+            "diag/step_cond_max":  cond.max().item(),
+        }
 
     def _policy_update(self, pi: torch.Tensor, q: torch.Tensor) -> torch.Tensor:
         q_i = q.unsqueeze(-1)   # (batch, n_agents, n_actions, 1)
@@ -267,24 +302,26 @@ class DeepEDLoss(LossModule):
         term1 = torch.einsum("...j,...ij->...i", pi, R)
         term2 = pi * torch.sum(R, dim=-2)
 
-        pi_prime = pi + self.alpha * (term1 - term2)
+        alpha = self._effective_alpha(q)
+        pi_prime = pi + alpha * (term1 - term2)
+        self._record_diag(pi_prime, q)                                  # [PATCH]
         pi_prime = torch.clamp(pi_prime, min=0.0)
         pi_prime = pi_prime / pi_prime.sum(dim=-1, keepdim=True).clamp(min=1e-8)
 
         return pi_prime
     
         
-    def _policy_update_bnn(self, pi: torch.Tensor, q: torch.Tensor) -> torch.Tensor:
-        q_i = q.unsqueeze(-1)                            
-        q_j = q.unsqueeze(-2)                              
-        adv_i_over_j = torch.clamp(q_i - q_j, min=0.0)    
-        F = torch.einsum("...j,...ij->...i", pi, adv_i_over_j)  
-
-        F_bar = (pi * F).sum(dim=-1, keepdim=True)         
-
-        excess = torch.clamp(F - F_bar, min=0.0)           
-
-        total_excess = excess.sum(dim=-1, keepdim=True)   
+    def _policy_update_bnn(self, pi: torch.Tensor, q: torch.Tensor) -> torch.Tensor:   # [PATCH] canonical BNN
+        """
+        Brown-von Neumann-Nash: growth proportional to the PAYOFF EXCESS
+            e_i = [ Q_i - pi . Q ]_+ ,    pi'_i = pi_i + alpha * ( e_i - pi_i * sum_j e_j ).
+        Mass is conserved (sum_i of the bracket is 0) and the stationary points
+        are exactly the Nash equilibria. (The previous version fed pairwise-inflow
+        sums into the excess, which does not have Nash stationary points.)
+        """
+        v_pi = (pi * q).sum(dim=-1, keepdim=True)
+        excess = torch.clamp(q - v_pi, min=0.0)
+        total_excess = excess.sum(dim=-1, keepdim=True)
 
         pi_prime = pi + self.alpha * (excess - pi * total_excess)
 
@@ -303,6 +340,18 @@ class DeepEDLoss(LossModule):
         pi_prime = pi_prime / pi_prime.sum(dim=-1, keepdim=True).clamp(min=1e-8)
 
         return pi_prime
+
+    def _policy_update_softmax(self, pi: torch.Tensor, q: torch.Tensor) -> torch.Tensor:   # [PATCH]
+        """
+        Non-evolutionary control: exponential-weights / MPO-style target
+            pi'(a) ∝ pi(a) * exp(alpha * Q(a))  =  softmax(log pi + alpha * Q).
+        Same actor, critic, KL-to-target loss and step size as DeepED; only the
+        target construction differs. This isolates the evolutionary update.
+        """
+        logits = torch.log(pi.clamp(min=1e-8)) + self.alpha * (
+            q - q.max(dim=-1, keepdim=True).values
+        )
+        return torch.softmax(logits, dim=-1)
 
     def _kl_divergence(self, pi_prime: torch.Tensor, pi: torch.Tensor) -> torch.Tensor:
         eps = 1e-8
@@ -329,6 +378,10 @@ class DeepEDLoss(LossModule):
                 pi_prime = self._policy_update_bnn(pi, q_vals)
             elif self.dynamics == "replicator":
                 pi_prime = self._policy_update_replicator(pi, q_vals)
+            elif self.dynamics == "softmax":                                   # [PATCH]
+                pi_prime = self._policy_update_softmax(pi, q_vals)
+            else:
+                raise ValueError(f"Unknown dynamics '{self.dynamics}'.")
 
         loss_kl = self._kl_divergence(pi_prime, pi)
         td_out  = TensorDict({"loss_objective": loss_kl}, batch_size=[])

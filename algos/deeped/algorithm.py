@@ -82,6 +82,7 @@ class DeepED:
             alpha=cfg.loss.alpha,
             gamma=cfg.loss.gamma,
             dynamics=dynamics,
+            safe_step=cfg.loss.get("safe_step", False),          # [PATCH]
         )
 
         self.loss_module.set_keys(
@@ -127,12 +128,16 @@ class DeepED:
     def update(self, tensordict_data):
         cfg = self.cfg
         loss_logs = []
-        grad_norms = []                         
+        grad_norms = []
+        diag_logs = []                                           # [PATCH]
 
         for _ in range(cfg.train.num_epochs):
             for _ in range(cfg.collector.frames_per_batch // cfg.train.minibatch_size):
                 subdata = self.replay_buffer.sample()
                 loss_vals = self.loss_module(subdata)
+
+                if self.loss_module.diag:                        # [PATCH]
+                    diag_logs.append(dict(self.loss_module.diag))
 
                 # --- Critic Step ---
                 self.critic_optim.zero_grad()
@@ -163,12 +168,17 @@ class DeepED:
                     "loss_entropy":   loss_vals["loss_entropy"].item(),
                 })
 
-        return {
+        out = {
             "loss/objective": sum(d["loss_objective"] for d in loss_logs) / len(loss_logs),
             "loss/critic":    sum(d["loss_critic"]    for d in loss_logs) / len(loss_logs),
             "loss/entropy":   sum(d["loss_entropy"]   for d in loss_logs) / len(loss_logs),
             "grad/norm":      sum(grad_norms) / len(grad_norms),
         }
+        if diag_logs:                                            # [PATCH]
+            for k in diag_logs[0]:
+                vals = [d[k] for d in diag_logs]
+                out[k] = max(vals) if k.endswith("_max") else sum(vals) / len(vals)
+        return out
 
 
     def post_update(
