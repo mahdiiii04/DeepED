@@ -23,15 +23,23 @@ def state_positions(K: int) -> np.ndarray:
     return np.stack([p0, p1], axis=2).reshape(K ** 4, 2, 2)
 
 
-def team_reward(prev, new, goal, step_penalty, shaping_coef, goal_reward):
-    """Shared reward. prev/new: [..., 2, 2]; goal: [2]. Same formula as TeamGoalShiftEnv._compute_rewards."""
+def team_reward(prev, new, goal, step_penalty, shaping_coef, goal_reward, agent_goal_reward=0.0):
+    """
+    Shared reward. prev/new: [..., 2, 2]; goal: [2]. Same formula as TeamGoalShiftEnv._compute_rewards:
+        step_penalty + shaping_coef * (total distance before - after)
+        + goal_reward * [all agents on the goal] + agent_goal_reward * (number of agents on the goal).
+    The last term is shared by both agents, so the game stays identical-interest (a potential game),
+    but a lone agent that reaches the goal is paid, which makes an old convention exploitable.
+    """
     d_prev = np.abs(prev - goal).sum(-1).sum(-1)
     d_new = np.abs(new - goal).sum(-1).sum(-1)
-    on = (np.abs(new - goal).sum(-1) == 0).all(-1)
-    return step_penalty + shaping_coef * (d_prev - d_new) + goal_reward * on
+    on_each = (np.abs(new - goal).sum(-1) == 0)
+    on = on_each.all(-1)
+    return (step_penalty + shaping_coef * (d_prev - d_new)
+            + goal_reward * on + agent_goal_reward * on_each.sum(-1))
 
 
-def build_tables(K, goal, step_penalty=-0.01, shaping_coef=0.1, goal_reward=1.0):
+def build_tables(K, goal, step_penalty=-0.01, shaping_coef=0.1, goal_reward=1.0, agent_goal_reward=0.0):
     """next_state [S,A,A] (int64) and reward [S,A,A] (float64) for joint action (a0, a1)."""
     pos = state_positions(K)
     S, A = pos.shape[0], len(DR)
@@ -42,7 +50,8 @@ def build_tables(K, goal, step_penalty=-0.01, shaping_coef=0.1, goal_reward=1.0)
     new[:, :, :, 1, 0] += DR[None, None, :]
     new[:, :, :, 1, 1] += DC[None, None, :]
     new = np.clip(new, 0, K - 1)
-    reward = team_reward(prev, new, np.asarray(goal), step_penalty, shaping_coef, goal_reward)
+    reward = team_reward(prev, new, np.asarray(goal), step_penalty, shaping_coef, goal_reward,
+                         agent_goal_reward)
     i0 = new[..., 0, 0] * K + new[..., 0, 1]
     i1 = new[..., 1, 0] * K + new[..., 1, 1]
     return (i0 * (K * K) + i1).astype(np.int64), reward.astype(np.float64)

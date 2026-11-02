@@ -18,7 +18,12 @@ class TeamGoalShiftEnv(GridWorldEnv):
     * The goal is NOT in the observation (obs = own position + other agent's position), exactly
       like the phase is hidden in the matrix game. A policy must infer/relearn the goal from reward.
     * Shared reward per step: step_penalty + shaping_coef * (total Manhattan distance to the
-      goal before - after) + goal_reward * [all agents on the goal].
+      goal before - after) + goal_reward * [all agents on the goal]
+      + agent_goal_reward * (number of agents on the goal).
+      agent_goal_reward = 0 (default): pure coordination game, an old convention stays an
+      approximate equilibrium after the goal moves (NashConv barely registers the switch).
+      agent_goal_reward > 0 (e.g. 0.1): a lone agent on the goal is paid, so the old convention is
+      exploitable and the unique equilibrium moves with the goal. Both versions are identical-interest.
     * No agent-specific out-of-bounds penalty (that would break the identical-interest property);
       moving into a wall just stays in place.
 
@@ -42,6 +47,7 @@ class TeamGoalShiftEnv(GridWorldEnv):
             step_penalty: float = -0.01,
             shaping_coef: float = 0.1,
             goal_reward: float = 1.0,
+            agent_goal_reward: float = 0.0,
             **kwargs,
     ):
         if phase_order not in ("cyclic", "random"):
@@ -57,6 +63,7 @@ class TeamGoalShiftEnv(GridWorldEnv):
         self.step_penalty = step_penalty
         self.shaping_coef = shaping_coef
         self.goal_reward = goal_reward
+        self.agent_goal_reward = agent_goal_reward
 
         super().__init__(**kwargs)
 
@@ -88,8 +95,10 @@ class TeamGoalShiftEnv(GridWorldEnv):
         goal = self._active_goal()[:, None, :]                                   # [ne,1,2]
         d_prev = (prev_positions - goal).abs().sum(-1).float().sum(-1)
         d_new = (positions - goal).abs().sum(-1).float().sum(-1)
-        on = ((positions - goal).abs().sum(-1) == 0).all(-1).float()
-        r = self.step_penalty + self.shaping_coef * (d_prev - d_new) + self.goal_reward * on
+        on_each = (positions - goal).abs().sum(-1) == 0                          # [ne, N]
+        on = on_each.all(-1).float()
+        r = (self.step_penalty + self.shaping_coef * (d_prev - d_new)
+             + self.goal_reward * on + self.agent_goal_reward * on_each.float().sum(-1))
         return r[:, None, None].expand(self._num_envs, self.n_agents, 1).clone()
 
     def _extra_reset_state(self, reset_mask) -> dict:
@@ -132,7 +141,8 @@ class TeamGoalShiftEnv(GridWorldEnv):
         """(next_state [S,A,A], reward [S,A,A]) of the CURRENT phase, as numpy arrays."""
         goal = self._active_goal()[0].cpu().numpy()
         return tn.build_tables(
-            self.grid_size, goal, self.step_penalty, self.shaping_coef, self.goal_reward
+            self.grid_size, goal, self.step_penalty, self.shaping_coef, self.goal_reward,
+            self.agent_goal_reward,
         )
 
     @torch.no_grad()

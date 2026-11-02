@@ -1,0 +1,55 @@
+seed: 0
+experiment_name: TeamGoalShiftShaped
+env_type: gridworld
+algo_name: mappo
+sub_exp: ${env.scenario_name}/${algo_name}
+
+env:
+  scenario_name: team_goal_shift
+  num_envs: null
+  max_steps: 100
+  device: null
+  kwargs:
+    grid_size: 5
+    agent_goal_reward: 0.1    # per-agent goal bonus (shared reward): old convention becomes exploitable
+    phase_length: 8000        # collector env steps (100 per iteration) -> 80 iterations per phase
+    phase_order: random       # "cyclic" | "random"
+    phase_seed: ${seed}       # same schedule for every algorithm at a given seed
+
+model:
+  shared_params: False
+  centralized_critic: True
+  depth: 2
+  num_cells: 64
+
+collector:
+  frames_per_batch: 51200
+  n_iters: 500
+  total_frames: null
+
+buffer:
+  memory_size: null
+
+train:
+  num_epochs: 10
+  minibatch_size: 4096
+  lr: 1e-4
+  max_grad_norm: 40.0
+  device: null
+
+loss:
+  clip_epsilon: 0.2
+  entropy_eps: 0.01
+  gamma: 0.95
+  lmbda: 0.9
+  normalize_advantage: False
+
+eval:
+  enabled: false
+  frequency: 10
+  qnet_temperature: 0.0       # QMIX: greedy policy for exact NashConv (softmax(Q/T) if > 0)
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null

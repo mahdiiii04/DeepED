@@ -1,34 +1,4 @@
-from omegaconf import DictConfig, OmegaConf
+from envs.gridworld.envs import GridWorldFactory
+from envs.gridworld import team_goal_shift  # noqa: F401  (registers "team_goal_shift")
 
-
-def _env_kwargs(cfg: DictConfig) -> dict:
-    kw = cfg.env.get("kwargs", None)
-    return {} if kw is None else OmegaConf.to_container(kw, resolve=True)
-
-
-def make_env(env_type: str, cfg: DictConfig, seed: int):
-    if env_type == "matrix_games":
-        from envs.matrix_games.envs import MatrixGameFactory
-        return MatrixGameFactory(
-            scenario=cfg.env.scenario_name, num_envs=cfg.env.num_envs,
-            max_steps=cfg.env.max_steps, device=cfg.env.device, seed=seed,
-            **_env_kwargs(cfg),
-        )
-    elif env_type == "gridworld":
-        from envs.gridworld.envs import GridWorldFactory
-        return GridWorldFactory(
-            scenario=cfg.env.scenario_name, num_envs=cfg.env.num_envs,
-            max_steps=cfg.env.max_steps, device=cfg.env.device,
-            pref_phase_length=cfg.env.get("pref_phase_length", 550),
-            goal_phase_length=cfg.env.get("goal_phase_length", 550),
-            seed=seed, **_env_kwargs(cfg),
-        )
-    elif env_type == "vmas":
-        from torchrl.envs.libs.vmas import VmasEnv
-        return VmasEnv(
-            scenario=cfg.env.scenario_name, num_envs=cfg.env.num_envs,
-            continuous_actions=False, max_steps=cfg.env.max_steps,
-            device=cfg.env.device, n_agents=3, seed=seed,
-        )
-    else:
-        raise NotImplementedError("Not yet")
+__all__ = ["GridWorldFactory"]
