@@ -71,6 +71,7 @@ class DeepEDLoss(LossModule):
             avg_actor_tau: float = 0.02,
             dynamics: str = "smith",
             safe_step: bool = False,                       # [PATCH]
+            q_noise: float = 0.0,                          # [PATCH] std of Gaussian noise added to Q in the target (eps_c knob)
     ):
         self._functional = functional
         super().__init__()
@@ -90,6 +91,7 @@ class DeepEDLoss(LossModule):
             raise ValueError(f"Unknown dynamics '{dynamics}'.")
         self.dynamics = dynamics
         self.safe_step = safe_step                         # [PATCH]
+        self.q_noise = q_noise                             # [PATCH]
         self.diag = {}                                     # [PATCH] last-minibatch diagnostics
 
         self.avg_actor_tau = avg_actor_tau
@@ -353,6 +355,18 @@ class DeepEDLoss(LossModule):
         )
         return torch.softmax(logits, dim=-1)
 
+    def target_policy(self, pi: torch.Tensor, q: torch.Tensor) -> torch.Tensor:   # [PATCH]
+        """The evolutionary (or control) target built from policy pi and fitness q."""
+        if self.dynamics == "smith":
+            return self._policy_update(pi, q)
+        if self.dynamics == "bnn":
+            return self._policy_update_bnn(pi, q)
+        if self.dynamics == "replicator":
+            return self._policy_update_replicator(pi, q)
+        if self.dynamics == "softmax":
+            return self._policy_update_softmax(pi, q)
+        raise ValueError(f"Unknown dynamics '{self.dynamics}'.")
+
     def _kl_divergence(self, pi_prime: torch.Tensor, pi: torch.Tensor) -> torch.Tensor:
         eps = 1e-8
         pi       = torch.clamp(pi,       min=eps)
@@ -372,16 +386,12 @@ class DeepEDLoss(LossModule):
         q_vals = self._get_q_values(tensordict)
 
         with torch.no_grad():
-            if self.dynamics == "smith":
-                pi_prime = self._policy_update(pi, q_vals)
-            elif self.dynamics == "bnn":
-                pi_prime = self._policy_update_bnn(pi, q_vals)
-            elif self.dynamics == "replicator":
-                pi_prime = self._policy_update_replicator(pi, q_vals)
-            elif self.dynamics == "softmax":                                   # [PATCH]
-                pi_prime = self._policy_update_softmax(pi, q_vals)
-            else:
-                raise ValueError(f"Unknown dynamics '{self.dynamics}'.")
+            q_t = q_vals
+            if self.q_noise > 0:                                               # [PATCH]
+                q_t = q_vals + self.q_noise * torch.randn_like(q_vals)
+            pi_prime = self.target_policy(pi, q_t)
+            if self.q_noise > 0:
+                self.diag = {**self.diag, "diag/noise_sup": (q_t - q_vals).abs().max().item()}
 
         loss_kl = self._kl_divergence(pi_prime, pi)
         td_out  = TensorDict({"loss_objective": loss_kl}, batch_size=[])

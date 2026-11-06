@@ -13,8 +13,11 @@ def policy_state_probs(env, policy, *, policy_type: str = "actor", temperature: 
     policy_type "actor": the policy's own distribution.
     policy_type "qnet" : greedy one-hot if temperature <= 0 (default), else softmax(Q / temperature).
     """
-    pos = torch.as_tensor(np.asarray(env.state_positions()), dtype=torch.long, device=env.device)
-    obs = env.obs_from_positions(pos)
+    if hasattr(env, "state_observations"):          # e.g. RingGameEnv: observations of every state
+        obs = env.state_observations()
+    else:                                           # grid envs: build observations from joint positions
+        pos = torch.as_tensor(np.asarray(env.state_positions()), dtype=torch.long, device=env.device)
+        obs = env.obs_from_positions(pos)
     td = TensorDict(
         {"agents": {"observation": obs}}, batch_size=[obs.shape[0]], device=env.device
     )

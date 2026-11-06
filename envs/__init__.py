@@ -34,6 +34,15 @@ def make_env(
             seed=seed,
             **_env_kwargs(cfg),
         )
+    elif env_type == "ring":
+        from envs.ring.ring_game import RingGameEnv
+        return RingGameEnv(
+            num_envs=cfg.env.num_envs,
+            max_steps=cfg.env.max_steps,
+            device=cfg.env.device,
+            seed=seed,
+            **_env_kwargs(cfg),
+        )
     elif env_type == "vmas":
         from torchrl.envs.libs.vmas import VmasEnv
         return VmasEnv(

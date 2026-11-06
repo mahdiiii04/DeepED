@@ -78,7 +78,7 @@ class MAPPO:
             critic_network=self.critic,
             clip_epsilon=cfg.loss.clip_epsilon,
             entropy_coeff=cfg.loss.entropy_eps,
-            normalize_advantage=False,
+            normalize_advantage=cfg.loss.get("normalize_advantage", False),
             separate_agent_loss=True,
         )
 

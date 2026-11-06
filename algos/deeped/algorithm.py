@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 
+from tensordict import TensorDict
 from tensordict.nn import TensorDictModule
 from torchrl.modules import ProbabilisticActor, ValueOperator
 from torchrl.modules.models.multiagent import MultiAgentMLP
@@ -83,6 +84,7 @@ class DeepED:
             gamma=cfg.loss.gamma,
             dynamics=dynamics,
             safe_step=cfg.loss.get("safe_step", False),          # [PATCH]
+            q_noise=cfg.loss.get("q_noise", 0.0),                # [PATCH]
         )
 
         self.loss_module.set_keys(
@@ -177,7 +179,7 @@ class DeepED:
         if diag_logs:                                            # [PATCH]
             for k in diag_logs[0]:
                 vals = [d[k] for d in diag_logs]
-                out[k] = max(vals) if k.endswith("_max") else sum(vals) / len(vals)
+                out[k] = max(vals) if k.endswith(("_max", "_sup")) else sum(vals) / len(vals)
         return out
 
 
@@ -186,3 +188,16 @@ class DeepED:
         tensordict_data
     ):
         self.loss_module.soft_update_avg_actor(tau=0.02)
+
+    @torch.no_grad()
+    def state_diagnostics(self, obs):                            # [PATCH]
+        """
+        Critic fitness q, live actor pi, EMA actor pi_avg and the Smith/target policy for a batch of
+        observations obs [S, n_agents, obs_dim]. Used to measure eps_c, eps_a, B against exact oracles.
+        """
+        td = TensorDict({"agents": {"observation": obs}}, batch_size=[obs.shape[0]], device=obs.device)
+        lm = self.loss_module
+        q = lm._get_q_values(td.clone())
+        pi = lm._get_action_probs(td.clone(), use_avg=False)
+        pi_avg = lm._get_action_probs(td.clone(), use_avg=True)
+        return dict(q=q, pi=pi, pi_avg=pi_avg, target=lm.target_policy(pi, q))

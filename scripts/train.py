@@ -113,7 +113,7 @@ def train(cfg: DictConfig):
         total_frames += tensordict_data.numel()
         global_step = total_frames
 
-        if cfg.env_type in ("gridworld", "matrix_games"):
+        if cfg.env_type in ("gridworld", "matrix_games", "ring"):
             episode_r = (
                 tensordict_data
                 .get(("next", "agents", "episode_reward"))
@@ -132,6 +132,12 @@ def train(cfg: DictConfig):
             **loss_metrics,
             **(env.get_extra_metrics() if hasattr(env, "get_extra_metrics") else {}),
         }
+        if algo_name in ("qmix", "vdn"):                                  # [PATCH] exploration rate actually in use
+            try:
+                scalar_metrics["diag/epsilon"] = float(algo.policy[1].eps)
+                scalar_metrics["diag/epsilon_collector"] = float(collector.policy[1].eps)
+            except Exception:
+                pass
         if cfg.env_type == "matrix_games":
             # [PATCH] extract_avg_policy now snapshots/restores the env state, so
             # the phase seen here (env/phase above) and by compute_nash_conv agree.
@@ -152,7 +158,7 @@ def train(cfg: DictConfig):
                 scalar_metrics["nash/potential"] = env.potential(avg_policy)
 
         # [PATCH] exact NashConv / potential for the team-reward grid game (Markov potential game)
-        if cfg.env_type == "gridworld" and hasattr(env, "exact_tables"):
+        if cfg.env_type in ("gridworld", "ring") and hasattr(env, "exact_tables"):
             probs = policy_state_probs(
                 env, algo.policy,
                 policy_type=cfg.get("policy_type", "actor"),
@@ -164,6 +170,9 @@ def train(cfg: DictConfig):
             scalar_metrics["nash/potential"] = st["value"]            # team value = exact potential
             scalar_metrics["nash/optimal_value"] = st["optimal_value"]
             scalar_metrics["nash/value_gap"] = st["value_gap"]
+            if cfg.env_type == "ring" and hasattr(algo, "state_diagnostics"):
+                from shared.ring_diag import ring_diagnostics          # [PATCH] eps_c, eps_a, B, Lambda vs exact oracles
+                scalar_metrics.update(ring_diagnostics(algo, env, cfg.loss.gamma))
 
         #──── logging ────────────────────────────────────────────
         db.log_metrics(run_id, global_step, scalar_metrics)

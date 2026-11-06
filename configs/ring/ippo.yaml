@@ -1,0 +1,58 @@
+seed: 0
+experiment_name: RingMain
+env_type: ring
+algo_name: ippo
+sub_exp: ${env.scenario_name}/${algo_name}
+
+env:
+  scenario_name: ring_game
+  num_envs: null
+  max_steps: 100
+  device: null
+  kwargs:
+    n_states: 4
+    n_actions: 3
+    v: 1.0
+    bridge: 0.5
+    payoff_scale: 1.0
+    phase_length: 2000        # collector steps (100 per iteration) -> 20 iterations per phase
+    phase_order: random
+    phase_seed: ${seed}
+
+model:
+  shared_params: False
+  centralized_critic: False
+  depth: 2
+  num_cells: 64
+
+collector:
+  frames_per_batch: 25600
+  n_iters: 400
+  total_frames: null
+
+buffer:
+  memory_size: null
+
+train:
+  num_epochs: 10
+  minibatch_size: 4096
+  lr: 1e-4
+  max_grad_norm: 40.0
+  device: null
+
+loss:
+  clip_epsilon: 0.2
+  entropy_eps: 0.01
+  gamma: 0.7
+  lmbda: 0.9
+  normalize_advantage: False
+
+eval:
+  enabled: false
+  frequency: 10
+  qnet_temperature: 0.0
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
