@@ -28,6 +28,14 @@ class QMIX:
         self.cfg = cfg
         device = cfg.train.device
 
+        # [PATCH] epsilon schedule is computed in float64 and written into the module directly.
+        # EGreedyModule.step() subtracts (eps_init - eps_end)/annealing_num_steps once per frame from a
+        # float32 buffer; when that decrement is below half a float32 ulp at 0.3 (~1.5e-8, i.e. more than
+        # ~19.5M annealing frames) the subtraction rounds away and epsilon stays at eps_init for the whole run.
+        self._anneal_frames = int(cfg.loss.get(
+            "eps_anneal_frames", cfg.collector.total_frames * cfg.loss.eps_anneal_frac))
+        self._frames_seen = 0
+
         action_spec = env.full_action_spec_unbatched[env.action_key]
         if hasattr(action_spec, "space") and hasattr(action_spec.space, "n"):
             n_actions = action_spec.space.n      # Correct for Categorical
@@ -72,7 +80,7 @@ class QMIX:
             EGreedyModule(
                 eps_init=cfg.loss.eps_init,
                 eps_end=cfg.loss.eps_end,
-                annealing_num_steps=int(cfg.collector.total_frames * cfg.loss.eps_anneal_frac),
+                annealing_num_steps=self._anneal_frames,
                 action_key=env.action_key,
                 spec=env.full_action_spec_unbatched,
                 device=device,
@@ -221,4 +229,14 @@ class QMIX:
         self,
         tensordict_data
     ):
-        self.policy[1].step(frames=self.current_frames)
+        # [PATCH] linear float64 schedule written straight into the exploration module (see __init__)
+        self._frames_seen += self.current_frames
+        init, end = float(self.cfg.loss.eps_init), float(self.cfg.loss.eps_end)
+        eps = max(end, init - (init - end) * self._frames_seen / self._anneal_frames)
+        module = self.policy[1]
+        module.eps.data.fill_(eps)
+        if abs(float(module.eps) - eps) > 1e-6:
+            raise RuntimeError(
+                f"could not set the exploration rate (wanted {eps:.6f}, module reports {float(module.eps):.6f}); "
+                "this torchrl version needs a different way to set EGreedyModule.eps"
+            )
