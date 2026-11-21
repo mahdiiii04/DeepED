@@ -392,9 +392,27 @@ def build_common_grid(
     combined = np.concatenate(all_steps)
     return np.linspace(combined.min(), combined.max(), n_points)
 
+BAND = "iqr"   # "iqr": median line + 25-75% band (robust to a single stuck seed); "std": mean +- 1 sd
+
+
 def shade(ax, x, mean, std, color, label, alpha=0.15, lw=2.2):
     ax.plot(x, mean, color=color, linewidth=lw, label=label)
     ax.fill_between(x, mean - std, mean + std, color=color, alpha=alpha, linewidth=0)
+
+
+def shade_band(ax, x, interp, color, label, nonneg=False, alpha=0.15, lw=2.2):
+    """interp: [n_seeds, n_points]. nonneg=True clips the band at 0 (gaps / NashConv cannot be negative)."""
+    if BAND == "iqr":
+        center = np.median(interp, 0)
+        lo, hi = np.percentile(interp, [25, 75], axis=0)
+    else:
+        center = interp.mean(0)
+        sd = interp.std(0)
+        lo, hi = center - sd, center + sd
+    if nonneg:
+        lo = np.maximum(lo, 0.0)
+    ax.plot(x, center, color=color, linewidth=lw, label=label)
+    ax.fill_between(x, lo, hi, color=color, alpha=alpha, linewidth=0)
 
 
 def draw_phase_lines(
@@ -460,8 +478,8 @@ def plot_scalar_metric(
             interpolate_to_grid(*load_metric(conn, rid, metric_key), grid)
             for rid in run_ids.values()
         ])
-        mean, std = interp.mean(0), interp.std(0)
-        shade(ax, grid, mean, std, color, label=f"{algo} (n={len(run_ids)} seeds)")
+        shade_band(ax, grid, interp, color, label=f"{algo} (n={len(run_ids)} seeds)",
+                   nonneg=(hline == 0.0))
         any_data = True
 
     if not any_data:
@@ -997,6 +1015,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--n_points", type=int, default=200)
     p.add_argument("--phase",    type=int, default=1, choices=[0, 1],
                    help="Draw phase-change lines on plots (1=yes [default], 0=no).")
+    p.add_argument("--band", default="iqr", choices=["iqr", "std"],
+                   help="iqr: median and 25-75%% band (default); std: mean +- 1 sd (clipped at 0 for gaps).")
     p.add_argument("--no_title", action="store_true",
                    help="Omit embedded titles from all plots (recommended for papers).")
     return p.parse_args()
@@ -1004,6 +1024,8 @@ def parse_args() -> argparse.Namespace:
 
 def main():
     args     = parse_args()
+    global BAND
+    BAND     = args.band
     scenario = args.scenario
     out_dir  = os.path.join(args.out_dir, scenario)
     conn     = _connect(args.db)

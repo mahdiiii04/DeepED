@@ -1,0 +1,107 @@
+# Experiments included in the paper (potential games with exact evaluation + one non-potential empirical test).
+# Omitted on purpose: VMAS, the original role-shifting / cooperative GridWorld envs (reward-only metrics,
+# no exact equilibrium measure, not potential games with known structure).
+#   python scripts/make_paper_report.py --config paper/paper_report.yaml --out paper_out [--plots]
+defaults:
+  eps: 0.5            # default threshold; every view can override it
+  skip_first: true    # drop the first phase (initial learning from scratch)
+  min_seeds: 5        # below this, tables show the [min, max] range instead of a bootstrap CI
+  n_boot: 5000
+  final_window: 0.1   # "final" value = mean of the last 10% of iterations
+
+names:                # display names (edit when you decide which DeepED variant is the main method)
+  deep_ed: "DeepED (clamp)"
+  deep_ed_safe: "DeepED (raw step)"
+
+experiments:
+  # ---- 1. theory validation: stateful Markov potential game, exact oracles ----
+  - name: ring_main
+    title: "Ring potential game: method comparison"
+    db: outputs/RingMain/results.db
+    scenario: ring_game
+    algos: [deep_ed, mappo, ippo, qmix]
+    ref: deep_ed
+    views:
+      - {label: NashConv, key: nash/nash_conv, eps: 0.2}
+      - {label: Value gap, key: nash/value_gap, eps: 0.2}
+
+  # ---- 2. non-stationary matrix potential game ----
+  - name: rotpot_main
+    title: "Rotating potential game: method comparison"
+    db: outputs/RotatingPotential/results.db
+    scenario: rotating_potential
+    algos: [deep_ed, mappo, ippo, qmix]
+    ref: deep_ed
+    views:
+      - {label: NashConv, key: nash/nash_conv, eps: 0.1}
+
+  - name: rotpot_ablation
+    title: "Rotating potential game: target-construction ablation"
+    db: outputs/AblationRPot/results.db
+    scenario: rotating_potential
+    algos: [deep_ed, deep_ed_safe, deep_ed_replicator, deep_ed_softmax, deep_ed_bnn]
+    ref: deep_ed
+    views:
+      - {label: NashConv, key: nash/nash_conv, eps: 0.1}
+
+  # ---- 3. stationary matrix potential game (sanity check) ----
+  - name: battle_of_sexes
+    title: "Battle of the sexes (stationary potential game)"
+    db: outputs/BattleOfSexes/results.db
+    scenario: battle_of_sexes
+    algos: [deep_ed, mappo, ippo, qmix]
+    ref: deep_ed
+    views:
+      - {label: NashConv, key: nash/nash_conv, eps: 0.05, kind: stationary}
+
+  # ---- 4. Markov potential game: team GridWorld (two settings of the same environment) ----
+  - name: grid_plain
+    title: "Potential GridWorld, pure coordination (agent_goal_reward = 0)"
+    db: outputs/TeamGoalShift/results.db
+    scenario: team_goal_shift
+    algos: [deep_ed, mappo, ippo, qmix]
+    ref: deep_ed
+    views:
+      - {label: Value gap, key: nash/value_gap, eps: 1.0}
+      - {label: NashConv, key: nash/nash_conv, eps: 0.5}
+      - {label: Normalised value gap, num_key: nash/potential, den_key: nash/optimal_value, eps: 0.05}
+
+  - name: grid_shaped
+    title: "Potential GridWorld, shaped (agent_goal_reward = 0.1)"
+    db: outputs/Two/results.db
+    scenario: team_goal_shift
+    algos: [deep_ed, mappo, ippo, qmix]
+    ref: deep_ed
+    views:
+      - {label: NashConv, key: nash/nash_conv, eps: 0.5}
+      - {label: Value gap, key: nash/value_gap, eps: 1.0}
+      - {label: Normalised value gap, num_key: nash/potential, den_key: nash/optimal_value, eps: 0.05}
+
+  - name: grid_shaped_ablation
+    title: "Potential GridWorld (shaped): raw step versus clamp"
+    db: outputs/AblationTeamGoalShaped/results.db
+    scenario: team_goal_shift
+    algos: [deep_ed_safe]
+    ref: deep_ed_safe
+    views:
+      - {label: NashConv, key: nash/nash_conv, eps: 0.5}
+
+  # ---- 5. outside the theory: zero-sum, empirical only ----
+  - name: biased_rps
+    title: "Biased RPS (zero-sum, non-potential; empirical)"
+    db: outputs/BiasedRPS/results.db
+    scenario: biased_rps
+    algos: [deep_ed, mappo, ippo, qmix]
+    ref: deep_ed
+    views:
+      - {label: NashConv, key: nash/nash_conv, eps: 1.0}
+
+sweeps:               # theory-validation sweeps on the ring game (DeepED only)
+  - {name: ring_phase,   glob: "outputs/RingSweep_phase_*/results.db",   param: env.kwargs.phase_length, x_transform: inv}
+  - {name: ring_alpha,   glob: "outputs/RingSweep_alpha_*/results.db",   param: loss.alpha}
+  - {name: ring_qnoise,  glob: "outputs/RingSweep_qnoise_*/results.db",  param: loss.q_noise}
+  - {name: ring_actorlr, glob: "outputs/RingSweep_actorlr_*/results.db", param: train.actor_lr}
+  - {name: ring_scale,   glob: "outputs/RingSweep_scale_*/results.db",   param: env.kwargs.payoff_scale}
+
+bound:                # Theorem-1 right-hand side from measured eps_a, eps_c, B, Lambda, V_T
+  - {name: ring_main, db: outputs/RingMain/results.db, algo: deep_ed}

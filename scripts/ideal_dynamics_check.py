@@ -38,13 +38,14 @@ def smith_target(pi, Qh, alpha):
     for s in range(S):
         for i in range(N):
             q, p = Qh[s, i], pi[s, i]
+            a_si = alpha[s, i] if np.ndim(alpha) else alpha
             Rm = np.clip(q[:, None] - q[None, :], 0, None)       # Rm[i,j] = [q_i - q_j]_+
-            tgt[s, i] = p + alpha * (Rm @ p - p * Rm.sum(0))
+            tgt[s, i] = p + a_si * (Rm @ p - p * Rm.sum(0))
     return tgt, float((Qh.max(2) - Qh.min(2)).max())
 
 
 def simulate(T=300, alpha=0.1, L=20, sigma=0.0, kappa=1.0, scale=1.0, V=1.0, b=0.5, gamma=0.7,
-             S=4, M=3, seed=0, order="random", check=True, persistent=False):
+             S=4, M=3, seed=0, order="random", check=True, persistent=False, adaptive=False):
     rng = np.random.default_rng(seed)
     N = 2
     Rmax, CR = scale * V, max(1.0, scale * V)
@@ -71,13 +72,16 @@ def simulate(T=300, alpha=0.1, L=20, sigma=0.0, kappa=1.0, scale=1.0, V=1.0, b=0
         else:
             noise = rng.uniform(-sigma, sigma, size=Q.shape) if sigma > 0 else np.zeros_like(Q)
         Qh = Q + noise
-        tgt, Bh = smith_target(pi, Qh, alpha)
-        if alpha * (M - 1) * Bh > 1 + 1e-12 or tgt.min() < -1e-12:
+        rng_si = Qh.max(2) - Qh.min(2)                                           # per (state, agent) critic range
+        a_arr = np.minimum(alpha, 1.0 / ((M - 1) * rng_si + 1e-12)) if adaptive else np.full(rng_si.shape, float(alpha))
+        tgt, Bh = smith_target(pi, Qh, a_arr)
+        log.setdefault("a_min", []).append(float(a_arr.min())); log.setdefault("a_max", []).append(float(a_arr.max()))
+        if (a_arr * (M - 1) * rng_si).max() > 1 + 1e-12 or tgt.min() < -1e-12:
             log["viol"]["valid"] += 1                                            # A6 violated
             tgt = np.clip(tgt, 0, None); tgt /= tgt.sum(-1, keepdims=True)
         new = pi + kappa * (tgt - pi)
         eps_a = float(np.abs(tgt - new).sum(-1).max()); eps_c = float(np.abs(noise).max())
-        zeta = 2 * alpha * (M - 1) * Bh
+        a_hi = float(a_arr.max())
         ns1, R1 = games[t]
         v_t = ro.change_size(Rw, R1) if t % L == 0 else 0.0
 
@@ -95,11 +99,13 @@ def simulate(T=300, alpha=0.1, L=20, sigma=0.0, kappa=1.0, scale=1.0, V=1.0, b=0
                 alt = pi.copy(); alt[:, i, :] = tgt[:, i, :]
                 br = pi.copy(); br[:, i, :] = ro.best_response_policy(ns, Rw, pi, gamma, i)
                 lam_i = float((ro.state_distribution(ns, br, gamma) / ro.state_distribution(ns, alt, gamma)).max())
-                rhs = alpha * (1 - gamma) * Phi_i ** 2 / lam_i - 4 * alpha * M * Rmax * eps_c / (1 - gamma) ** 2
+                # state-dependent step: dissipation scales with the SMALLEST step, critic error with the LARGEST
+                rhs = (a_arr[:, i].min() * (1 - gamma) * Phi_i ** 2 / lam_i
+                       - 4 * a_arr[:, i].max() * M * Rmax * eps_c / (1 - gamma) ** 2)
                 slack["d"] = min(slack["d"], I_i - rhs)
                 if I_i < rhs - 1e-9: log["viol"]["d"] += 1
             # (c) cross term: potential (= team value) of the joint target vs the sum of unilateral gains
-            Xi = 2 * ro_kappa(Rmax, gamma) * N * (N - 1) * (M - 1) ** 2 * Bh ** 2 * alpha ** 2
+            Xi = 2 * ro_kappa(Rmax, gamma) * N * (N - 1) * (M - 1) ** 2 * Bh ** 2 * a_hi ** 2
             gain = tn.policy_value(ns, Rw, tgt, gamma).mean() - V_old
             slack["c"] = min(slack["c"], gain - (I_sum - Xi))
             if gain < I_sum - Xi - 1e-9: log["viol"]["c"] += 1
@@ -121,7 +127,8 @@ def simulate(T=300, alpha=0.1, L=20, sigma=0.0, kappa=1.0, scale=1.0, V=1.0, b=0
         log["N"].append(tn.team_nash_stats(ns1, R1, pi, gamma)["nash_conv"])
         log["steps"] += 1
     log["slack"] = slack
-    log["params"] = dict(alpha=alpha, gamma=gamma, N=N, M=M, Rmax=Rmax, CR=CR, T=T)
+    log["params"] = dict(alpha=alpha, gamma=gamma, N=N, M=M, Rmax=Rmax, CR=CR, T=T,
+                         a_min=min(log["a_min"]), a_max=max(log["a_max"]))
     return log
 
 
@@ -131,29 +138,30 @@ def ro_kappa(Rmax, gamma):
 
 def bound_rhs(log):
     p = log["params"]; a, g, N, M, Rmax, CR, T = p["alpha"], p["gamma"], p["N"], p["M"], p["Rmax"], p["CR"], p["T"]
+    a_lo, a_hi = p.get("a_min", a), p.get("a_max", a)          # state-dependent step: 1/alpha uses the smallest, the rest the largest
     Lam, eps_a, eps_c, B = max(log["Lam"]), max(log["eps_a"]), max(log["eps_c"]), max(log["B"])
     VT = sum(log["v"])
-    Xi = 2 * ro_kappa(Rmax, g) * N * (N - 1) * (M - 1) ** 2 * B ** 2 * a ** 2
+    Xi = 2 * ro_kappa(Rmax, g) * N * (N - 1) * (M - 1) ** 2 * B ** 2 * a_hi ** 2
     terms = dict(init=4 * N * Rmax / ((1 - g) * T), change=2 * N * CR * VT / ((1 - g) ** 2 * T),
-                 actor=N * Rmax * eps_a / (1 - g) ** 2, critic=4 * a * N * M * Rmax * eps_c / (1 - g) ** 2, simult=Xi)
-    return Lam * N / (a * (1 - g)) * sum(terms.values()), terms, dict(Lam=Lam, eps_a=eps_a, eps_c=eps_c, B=B, V_T=VT)
+                 actor=N * Rmax * eps_a / (1 - g) ** 2, critic=4 * a_hi * N * M * Rmax * eps_c / (1 - g) ** 2, simult=Xi)
+    return Lam * N / (a_lo * (1 - g)) * sum(terms.values()), terms, dict(Lam=Lam, eps_a=eps_a, eps_c=eps_c, B=B, V_T=VT)
 
 
 def cmd_check(args):
     print("Per-step lemma checks (violations / steps) and minimum slack; slack >= 0 everywhere means the lemma held.\n")
-    print(f"{'setting':44s} {'A6 viol':>8s} {'(a)':>5s} {'(b)':>5s} {'(c)':>5s} {'(d)':>5s} {'min slack (a,b,c,d)':>34s}  bound ratio RHS/LHS")
+    print(f"{'setting':58s} {'A6 viol':>8s} {'(a)':>5s} {'(b)':>5s} {'(c)':>5s} {'(d)':>5s} {'min slack (a,b,c,d)':>34s}  bound ratio RHS/LHS")
     rng = np.random.default_rng(0)
     tot = dict(a=0, b=0, c=0, d=0)
     for k in range(args.n):
         alpha = float(rng.choice([0.02, 0.05, 0.1, 0.2, 0.4])); L = int(rng.choice([5, 10, 20, 40]))
         sigma = float(rng.choice([0.0, 0.05, 0.2])); kappa = float(rng.choice([1.0, 0.7, 0.4]))
-        scale = float(rng.choice([0.5, 1.0]))
-        lg = simulate(T=args.T, alpha=alpha, L=L, sigma=sigma, kappa=kappa, scale=scale, seed=k)
+        scale = float(rng.choice([0.5, 1.0, 4.0])); adaptive = bool(rng.random() < 0.6)
+        lg = simulate(T=args.T, alpha=alpha, L=L, sigma=sigma, kappa=kappa, scale=scale, seed=k, adaptive=adaptive)
         rhs, _, _ = bound_rhs(lg); lhs = float(np.mean(np.array(lg["N"][:-1]) ** 2))
         v = lg["viol"]; sl = lg["slack"]
         for key in tot: tot[key] += v[key]
-        tag = f"a={alpha} L={L} sig={sigma} kap={kappa} sc={scale}"
-        print(f"{tag:44s} {v['valid']:8d} {v['a']:5d} {v['b']:5d} {v['c']:5d} {v['d']:5d} "
+        tag = f"a={alpha} L={L} sig={sigma} kap={kappa} sc={scale} {'adapt' if adaptive else 'fixed'} amin={lg['params']['a_min']:.3f}"
+        print(f"{tag:58s} {v['valid']:8d} {v['a']:5d} {v['b']:5d} {v['c']:5d} {v['d']:5d} "
               f"{sl['a']:8.1e} {sl['b']:8.1e} {sl['c']:8.1e} {sl['d']:8.1e}  {rhs / max(lhs, 1e-12):10.1e}")
     print("\ntotal lemma violations:", tot)
 

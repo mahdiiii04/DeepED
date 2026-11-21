@@ -57,6 +57,7 @@ def analyze_run(conn, run_id, eps, skip_first, nash_key, phase_key):
         return None
 
     rec, cens, peak, mean_n = [], [], [], []
+    settle, settle_cens, relapses = [], [], []
     for a, b in segs:
         seg = nash[a:b]
         hit = np.nonzero(seg <= eps)[0]
@@ -66,6 +67,22 @@ def analyze_run(conn, run_id, eps, skip_first, nash_key, phase_key):
         else:
             rec.append(phase_len); cens.append(1)
         peak.append(seg.max()); mean_n.append(seg.mean())
+        # settle time: steps until the LAST excursion above eps ends (stays <= eps afterwards).
+        # Unlike the first-hit recovery time it is not fooled by a brief dip below eps followed by a relapse.
+        above = seg > eps
+        idx = np.nonzero(above)[0]
+        if len(idx) == 0:
+            settle.append(0.0); settle_cens.append(0)
+        elif idx[-1] == len(seg) - 1:
+            settle.append(float(phase_len)); settle_cens.append(1)
+        else:
+            settle.append(float(steps[a + idx[-1] + 1] - steps[a])); settle_cens.append(0)
+        # relapses: up-crossings of eps after the first time the run got below it
+        if len(hit):
+            after = above[hit[0]:]
+            relapses.append(int(np.sum(after[1:] & ~after[:-1])))
+        else:
+            relapses.append(0)
 
     start = segs[0][0]
     tail = nash[start:segs[-1][1]]
@@ -75,6 +92,9 @@ def analyze_run(conn, run_id, eps, skip_first, nash_key, phase_key):
         mean_peak=float(np.mean(peak)),
         mean_recovery_steps=float(np.mean(rec)),
         censored_frac=float(np.mean(cens)),
+        mean_settle_steps=float(np.mean(settle)),
+        settle_censored_frac=float(np.mean(settle_cens)),
+        relapses_per_phase=float(np.mean(relapses)),
         n_phases=len(segs),
     )
 
@@ -106,7 +126,8 @@ def main():
     algos = args.algos or [r[0] for r in conn.execute(
         "SELECT DISTINCT algo_name FROM runs WHERE scenario=?", (args.scenario,))]
 
-    keys = ["mean_nash", "frac_above_eps", "mean_peak", "mean_recovery_steps", "censored_frac"]
+    keys = ["mean_nash", "frac_above_eps", "mean_peak", "mean_recovery_steps", "censored_frac",
+            "mean_settle_steps", "settle_censored_frac", "relapses_per_phase"]
     per_run_rows, summary = [], {}
     for algo in algos:
         runs = conn.execute(
